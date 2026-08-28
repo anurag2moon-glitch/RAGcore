@@ -33,3 +33,13 @@ def test_store_swap_preserves_retrieval_ordering(md_book: Path, tmp_path: Path) 
     assert [r.chunk.chunk_id for r in mem_results] == [r.chunk.chunk_id for r in lance_results]
     # metadata round-trips through LanceDB's columnar schema too
     assert mem_results[0].chunk.meta.section_path == lance_results[0].chunk.meta.section_path
+
+    mem_sources = {s.source_id: s for s in mem_corpus.sources()}
+    lance_sources = {s.source_id: s for s in lance_corpus.sources()}
+    assert mem_sources.keys() == lance_sources.keys()
+    for sid, mem_info in mem_sources.items():
+        lance_info = lance_sources[sid]
+        assert lance_info.chunk_count == mem_info.chunk_count
+        assert lance_info.path == mem_info.path
+        assert lance_info.title == mem_info.title
+        assert lance_info.source_type == mem_info.source_type

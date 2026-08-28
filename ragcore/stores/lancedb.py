@@ -236,21 +236,29 @@ class LanceDBStore:
         return before - after
 
     def list_sources(self) -> list[SourceInfo]:
-        df = self._table.to_pandas()
-        if df.empty:
-            return []
-        sources: dict[str, SourceInfo] = {}
-        counts = df["source_id"].value_counts()
-        for source_id, group in df.groupby("source_id"):
-            first = group.iloc[0]
-            sources[source_id] = SourceInfo(
-                source_id=source_id,
-                path=first["source_path"],
-                title=first["source_title"],
-                source_type=first["source_type"],
-                chunk_count=int(counts[source_id]),
+        # Pull only the columns needed for the summary, via pyarrow directly
+        # (not to_pandas(), which would pull in pandas as an undeclared
+        # dependency of the 'lancedb' extra).
+        table = self._table.to_arrow().select(
+            ["source_id", "source_path", "source_title", "source_type"]
+        )
+        counts: dict[str, int] = {}
+        first_row: dict[str, dict] = {}
+        for row in table.to_pylist():
+            sid = row["source_id"]
+            counts[sid] = counts.get(sid, 0) + 1
+            first_row.setdefault(sid, row)
+
+        return [
+            SourceInfo(
+                source_id=sid,
+                path=first_row[sid]["source_path"],
+                title=first_row[sid]["source_title"],
+                source_type=first_row[sid]["source_type"],
+                chunk_count=n,
             )
-        return list(sources.values())
+            for sid, n in counts.items()
+        ]
 
     def count(self) -> int:
         return self._table.count_rows()
