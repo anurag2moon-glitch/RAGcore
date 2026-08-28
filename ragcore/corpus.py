@@ -15,6 +15,8 @@ from typing import Any, Callable, Iterable, Sequence
 from ragcore.chunking.base import Chunker
 from ragcore.chunking.structural import StructuralChunker
 from ragcore.embedding.base import Embedder
+from ragcore.errors import RagcoreError
+from ragcore.generation.base import Answer, Generator
 from ragcore.loaders import LoaderRegistry
 from ragcore.retrieval.base import Retriever
 from ragcore.retrieval.vector import VectorRetriever
@@ -37,6 +39,10 @@ class Corpus:
     future graph layer uses. `Corpus.retriever = GraphRetriever(corpus.retriever,
     graph_store, corpus)` swaps in graph-aware retrieval without changing any
     `corpus.retrieve(...)` call site.
+
+    `generator` is similarly public and optional (default None): retrieval
+    works with no generator configured at all, and `ask()` only requires one
+    be set when it's actually called.
     """
 
     def __init__(
@@ -45,12 +51,14 @@ class Corpus:
         embedder: Embedder,
         chunker: Chunker | None = None,
         loaders: LoaderRegistry | None = None,
+        generator: Generator | None = None,
     ) -> None:
         self.store = store
         self.embedder = embedder
         self.chunker = chunker or StructuralChunker()
         self.loaders = loaders or LoaderRegistry()
         self.retriever: Retriever = VectorRetriever(embedder, store)
+        self.generator = generator
 
     @classmethod
     def open(
@@ -199,6 +207,27 @@ class Corpus:
         if min_score is not None:
             results = [r for r in results if r.score >= min_score]
         return results
+
+    def ask(
+        self,
+        query: str,
+        *,
+        k: int = 10,
+        filters: Filter | None = None,
+        generator: Generator | None = None,
+    ) -> Answer:
+        """Retrieve then synthesize: `retrieve(query, ...)` followed by a
+        Generator call over the results. Additive sugar over `retrieve()` —
+        it changes nothing about how retrieval itself works, and a Corpus
+        that never calls `ask()` never needs a Generator configured at all.
+        """
+        gen = generator or self.generator
+        if gen is None:
+            raise RagcoreError(
+                "no Generator configured; pass generator=... to ask() or set corpus.generator"
+            )
+        results = self.retrieve(query, k=k, filters=filters)
+        return gen.generate(query, results)
 
     # -- corpus management -------------------------------------------------
 

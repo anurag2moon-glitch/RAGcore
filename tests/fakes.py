@@ -1,10 +1,13 @@
-"""Test doubles for Embedder and VectorStore.
+"""Test doubles for Embedder, VectorStore, and Generator.
 
 These exist to prove the protocols are honest: the whole ingest -> retrieve
-pipeline should run against these with no network access and no native
-dependencies (no lancedb, no voyageai). FakeEmbedder is deterministic
-(hash-based) so the same text always produces the same vector — useful for
-chunk-id-stability and store-swap comparisons, not for semantic relevance.
+-> ask pipeline should run against these with no network access and no
+native dependencies (no lancedb, no voyageai, no anthropic). FakeEmbedder
+is deterministic (hash-based) so the same text always produces the same
+vector — useful for chunk-id-stability and store-swap comparisons, not for
+semantic relevance. FakeGenerator is likewise deterministic and just
+echoes back what it was given, so tests can assert on composition (did
+ask() pass retrieve()'s results through?) without asserting on prose.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ import hashlib
 import math
 from typing import Literal, Sequence
 
+from ragcore.generation.base import Answer
 from ragcore.types import Chunk, Filter, Retrieved, SourceInfo, Vector
 
 
@@ -131,3 +135,21 @@ class InMemoryStore:
     def all_chunks(self) -> list[Chunk]:
         """Test-only convenience, not part of the VectorStore protocol."""
         return list(self._chunks.values())
+
+
+class FakeGenerator:
+    """Deterministic Generator double: no network, no LLM. Echoes the query
+    and the ordered chunk_ids it was given, so a test can assert on
+    composition (what retrieve() produced flowing correctly into generate())
+    without asserting on real prose."""
+
+    model = "fake-echo-generator"
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def generate(self, query: str, context: Sequence[Retrieved]) -> Answer:
+        chunk_ids = [r.chunk.chunk_id for r in context]
+        self.calls.append((query, chunk_ids))
+        text = f"[fake answer to {query!r} using {len(chunk_ids)} chunk(s): {chunk_ids}]"
+        return Answer(text=text, citations=list(context))

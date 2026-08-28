@@ -29,3 +29,8 @@ class EmbeddingError(RagcoreError):
 class StoreError(RagcoreError):
     """Raised by a VectorStore or GraphStore for persistence failures,
     schema mismatches, or invalid queries."""
+
+
+class GenerationError(RagcoreError):
+    """Raised when a Generator backend fails (API error, refusal, rate
+    limit exhausted after retries)."""

@@ -19,6 +19,7 @@ epub = ["ebooklib>=0.18", "selectolax>=0.3"]
 docx = ["python-docx>=1.1"]
 voyage = ["voyageai>=0.3"]
 lancedb = ["lancedb>=0.13", "pyarrow>=16"]
+generation = ["anthropic>=1.0"]
 all = [
     "pymupdf>=1.24",
     "ebooklib>=0.18",
@@ -27,6 +28,7 @@ all = [
     "voyageai>=0.3",
     "lancedb>=0.13",
     "pyarrow>=16",
+    "anthropic>=1.0",
 ]
 dev = ["pytest>=8", "pytest-cov>=5"]
 
