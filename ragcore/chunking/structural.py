@@ -145,9 +145,9 @@ def _expand_oversized(units: list[_Unit], chunk_size_tokens: int) -> list[_Unit]
 def _derive_chapter_section(
     section_path: tuple[str, ...]
 ) -> tuple[str | None, str | None]:
-    chapter = section_path[0] if section_path else None
+    chapter_title = section_path[0] if section_path else None
     section = section_path[-1] if len(section_path) > 1 else None
-    return chapter, section
+    return chapter_title, section
 
 
 class StructuralChunker:
@@ -189,14 +189,14 @@ class StructuralChunker:
                     text = "\n\n".join(u.text for u in unit_batch)
                     pages = [u.page for u in unit_batch if u.page is not None]
                     section_path = unit_batch[0].section_path
-                    chapter, section = _derive_chapter_section(section_path)
+                    chapter_title, section = _derive_chapter_section(section_path)
                     meta = ChunkMeta(
                         source_id=doc.source_id,
                         source_path=doc.path,
                         source_title=doc.title,
                         source_type=doc.source_type,
                         section_path=section_path,
-                        chapter=chapter,
+                        chapter_title=chapter_title,
                         chapter_index=chapter_index if section_path else None,
                         section=section,
                         page_start=min(pages) if pages else None,

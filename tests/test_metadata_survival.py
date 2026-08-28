@@ -30,7 +30,7 @@ def test_metadata_survives_full_pipeline(md_book: Path) -> None:
     chunks = store.all_chunks()
     by_chapter: dict[str | None, list] = {}
     for c in chunks:
-        by_chapter.setdefault(c.meta.chapter, []).append(c)
+        by_chapter.setdefault(c.meta.chapter_title, []).append(c)
 
     assert CH1_TITLE in by_chapter
     assert CH2_TITLE in by_chapter
@@ -55,7 +55,7 @@ def test_retrieved_chunks_carry_full_metadata(md_book: Path) -> None:
     assert results
     for r in results:
         assert r.chunk.meta.source_type == "md"
-        assert r.chunk.meta.chapter is not None
+        assert r.chunk.meta.chapter_title is not None
         assert r.graph is None  # graph layer not attached
 
 
@@ -63,7 +63,7 @@ def test_filters_restrict_results_by_structure(md_book: Path) -> None:
     corpus, store = _build_corpus()
     corpus.ingest(md_book)
 
-    ch2_ids = {c.chunk_id for c in store.all_chunks() if c.meta.chapter == CH2_TITLE}
+    ch2_ids = {c.chunk_id for c in store.all_chunks() if c.meta.chapter_title == CH2_TITLE}
     filtered = corpus.retrieve("chunking", k=50, filters={"chapter_index": {"gte": 1}})
 
     assert filtered

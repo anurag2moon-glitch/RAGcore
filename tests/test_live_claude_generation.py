@@ -21,7 +21,7 @@ def _fake_context() -> list[Retrieved]:
         source_title="Test Book",
         source_type="epub",
         section_path=("Chapter I.",),
-        chapter="Chapter I.",
+        chapter_title="Chapter I.",
         chapter_index=0,
         section=None,
         page_start=1,

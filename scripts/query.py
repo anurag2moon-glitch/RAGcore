@@ -49,12 +49,12 @@ def main() -> None:
         print("\n--- grounded in ---")
         for r in answer.citations:
             m = r.chunk.meta
-            print(f"  score={r.score:.4f}  chapter={m.chapter!r}  page={m.page_start}")
+            print(f"  score={r.score:.4f}  chapter_index={m.chapter_index}  chapter_title={m.chapter_title!r}  page={m.page_start}")
         return
 
     for r in corpus.retrieve(query, k=k):
         m = r.chunk.meta
-        print(f"score={r.score:.4f}  chapter={m.chapter!r}  page={m.page_start}")
+        print(f"score={r.score:.4f}  chapter_index={m.chapter_index}  chapter_title={m.chapter_title!r}  page={m.page_start}")
         print(f"{r.chunk.text}\n")
         print("-" * 70)
 

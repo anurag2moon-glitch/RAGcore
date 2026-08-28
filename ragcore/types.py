@@ -80,8 +80,21 @@ class ChunkMeta:
 
     # --- book structure ---
     section_path: tuple[str, ...]
-    chapter: str | None
+    chapter_title: str | None
+    """Raw chapter title text, taken verbatim from the source's own
+    structure metadata (EPUB TOC label, PDF outline entry, DOCX/MD heading
+    text). Display-only — depending on source quality this can be noisy or
+    malformed (e.g. some Project Gutenberg EPUB editions concatenate an
+    illustration caption onto the chapter heading in the TOC label itself).
+    Never key retrieval or filtering off this field; use `chapter_index`."""
     chapter_index: int | None
+    """Ordinal position of this chunk's chapter among all structural groups
+    encountered in document order (spine order for EPUB, page/block order
+    otherwise) — stable and clean regardless of how noisy `chapter_title`
+    is. Not necessarily the book's own printed chapter number: front matter
+    or title-page groups before the first real chapter consume index slots
+    too, so "Chapter IV" may have chapter_index=5, not 4. Safe to filter
+    and range-query on (e.g. `{"chapter_index": {"gte": 7}}`)."""
     section: str | None
     page_start: int | None
     page_end: int | None

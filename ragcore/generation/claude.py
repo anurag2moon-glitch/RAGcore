@@ -37,7 +37,7 @@ def _format_context(context: Sequence[Retrieved]) -> str:
     parts: list[str] = []
     for i, r in enumerate(context, start=1):
         m = r.chunk.meta
-        loc = m.chapter or "unknown location"
+        loc = m.chapter_title or "unknown location"
         if m.section:
             loc += f", {m.section}"
         if m.page_start is not None:

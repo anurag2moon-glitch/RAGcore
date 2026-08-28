@@ -31,13 +31,16 @@ else:
 # column) and extra (opaque JSON) are deliberately excluded — filtering on
 # those would require a different predicate grammar than the flat
 # equality/membership/range DSL the rest of ragcore is written against.
+# chapter_title is *not* filterable, on purpose: it's raw, possibly-noisy
+# display text (see ChunkMeta.chapter_title's docstring) — chapter_index is
+# the clean, stable ordinal for filtering/keying, and is the only one
+# exposed here.
 _FILTERABLE_FIELDS = frozenset(
     {
         "source_id",
         "source_path",
         "source_title",
         "source_type",
-        "chapter",
         "chapter_index",
         "section",
         "page_start",
@@ -62,7 +65,7 @@ def _build_schema(dim: int) -> "pa.Schema":
             pa.field("source_title", pa.string()),
             pa.field("source_type", pa.string()),
             pa.field("section_path", pa.list_(pa.string())),
-            pa.field("chapter", pa.string()),
+            pa.field("chapter_title", pa.string()),
             pa.field("chapter_index", pa.int64()),
             pa.field("section", pa.string()),
             pa.field("page_start", pa.int64()),
@@ -124,7 +127,7 @@ def _chunk_to_row(chunk: Chunk) -> dict:
         "source_title": m.source_title,
         "source_type": m.source_type,
         "section_path": list(m.section_path),
-        "chapter": m.chapter,
+        "chapter_title": m.chapter_title,
         "chapter_index": m.chapter_index,
         "section": m.section,
         "page_start": m.page_start,
@@ -145,7 +148,7 @@ def _row_to_chunk(row: dict) -> Chunk:
         source_title=row.get("source_title"),
         source_type=row["source_type"],
         section_path=tuple(row.get("section_path") or ()),
-        chapter=row.get("chapter"),
+        chapter_title=row.get("chapter_title"),
         chapter_index=row.get("chapter_index"),
         section=row.get("section"),
         page_start=row.get("page_start"),
