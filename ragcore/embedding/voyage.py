@@ -9,10 +9,20 @@ Sending pre-chunked groups keeps contextualization (each group's chunks are
 embedded with awareness of each other) while keeping offsets intact.
 
 Batches requests to stay under the API's per-request limits: 1,000 inputs
-(ChunkGroups) and 16,000 chunks total. A single ChunkGroup larger than the
-chunk limit can't be split without breaking its contextualization window,
-so that raises EmbeddingError instead of silently truncating — the fix is a
-smaller `max_group_tokens` on the Chunker, not truncation here.
+(ChunkGroups), 16,000 chunks total, and `max_tokens_per_request` tokens
+total (default 100,000 — a conservative default well under Voyage's own
+120K-token ceiling, and small enough to also respect lower account-tier
+rate limits like the unfunded-account default of 10K tokens/minute, which
+a token-blind batcher can blow through in a single request on any book of
+meaningful length). A single ChunkGroup larger than either the chunk or
+token limit can't be split without breaking its contextualization window,
+so that raises EmbeddingError instead of silently truncating — the fix is
+a smaller `max_group_tokens` on the Chunker, not truncation here.
+
+`min_request_interval` optionally paces requests (sleeps between them) to
+stay under a request-per-minute cap — irrelevant on a funded account, but
+without it a free/unfunded Voyage account (3 RPM) fails outright even with
+correctly token-sized batches.
 """
 
 from __future__ import annotations
@@ -20,6 +30,7 @@ from __future__ import annotations
 import time
 from typing import Any, Literal, Sequence
 
+from ragcore.chunking.tokenizer import count_tokens
 from ragcore.errors import EmbeddingError
 from ragcore.types import Vector
 
@@ -50,6 +61,8 @@ class VoyageContextEmbedder:
         api_key: str | None = None,
         client: Any | None = None,
         max_retries: int = 5,
+        max_tokens_per_request: int = 100_000,
+        min_request_interval: float = 0.0,
     ) -> None:
         if client is None and voyageai is None:
             raise EmbeddingError(
@@ -61,6 +74,9 @@ class VoyageContextEmbedder:
         self.dim = output_dimension
         self._output_dtype = output_dtype
         self._max_retries = max_retries
+        self._max_tokens_per_request = max_tokens_per_request
+        self._min_request_interval = min_request_interval
+        self._last_request_at: float | None = None
         self._client = client or (
             voyageai.Client(api_key=api_key) if api_key else voyageai.Client()
         )
@@ -93,6 +109,7 @@ class VoyageContextEmbedder:
         idx_buf: list[int] = []
         group_buf: list[Sequence[str]] = []
         chunk_count = 0
+        token_count = 0
 
         for i, group in enumerate(groups):
             n = len(group)
@@ -102,14 +119,24 @@ class VoyageContextEmbedder:
                     f"{self.MAX_CHUNKS_PER_REQUEST}-chunk-per-request limit for "
                     f"{self.name}; use a Chunker with a smaller max_group_tokens"
                 )
+            group_tokens = sum(count_tokens(t) for t in group)
+            if group_tokens > self._max_tokens_per_request:
+                raise EmbeddingError(
+                    f"group {i} has {group_tokens} tokens, exceeding "
+                    f"max_tokens_per_request ({self._max_tokens_per_request}) for "
+                    f"{self.name}; use a Chunker with a smaller max_group_tokens or "
+                    f"raise max_tokens_per_request"
+                )
             would_overflow_inputs = len(group_buf) >= self.MAX_INPUTS_PER_REQUEST
             would_overflow_chunks = chunk_count + n > self.MAX_CHUNKS_PER_REQUEST
-            if group_buf and (would_overflow_inputs or would_overflow_chunks):
+            would_overflow_tokens = token_count + group_tokens > self._max_tokens_per_request
+            if group_buf and (would_overflow_inputs or would_overflow_chunks or would_overflow_tokens):
                 batches.append((idx_buf, group_buf))
-                idx_buf, group_buf, chunk_count = [], [], 0
+                idx_buf, group_buf, chunk_count, token_count = [], [], 0, 0
             idx_buf.append(i)
             group_buf.append(group)
             chunk_count += n
+            token_count += group_tokens
 
         if group_buf:
             batches.append((idx_buf, group_buf))
@@ -117,11 +144,21 @@ class VoyageContextEmbedder:
 
     # -- request/response ------------------------------------------------
 
+    def _wait_for_rate_limit(self) -> None:
+        if self._min_request_interval <= 0 or self._last_request_at is None:
+            return
+        elapsed = time.monotonic() - self._last_request_at
+        remaining = self._min_request_interval - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
+
     def _call_with_retry(
         self, batch: list[Sequence[str]], input_type: Literal["document", "query", None]
     ) -> Any:
         last_err: Exception | None = None
         for attempt in range(self._max_retries):
+            self._wait_for_rate_limit()
+            self._last_request_at = time.monotonic()
             try:
                 return self._client.contextualized_embed(
                     inputs=batch,
