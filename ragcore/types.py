@@ -1,0 +1,189 @@
+"""Core data types shared across the ingestion, embedding, storage, and
+retrieval layers.
+
+Everything here is a frozen dataclass. Chunks and their metadata flow
+loader -> chunker -> embedder -> store -> retriever unchanged; nothing
+downstream mutates what an upstream stage produced.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
+from ragcore.graph.types import GraphContext
+
+SourceType = Literal["pdf", "epub", "docx", "txt", "md"]
+
+# A single embedding vector. Kept as a plain list[float] rather than a numpy
+# array at this boundary so the protocols don't force a numpy dependency on
+# every implementation (e.g. a pure-Python fake store in tests).
+Vector = list[float]
+
+# Store-agnostic filter DSL. Keys are ChunkMeta field names; values are
+# either a literal (equality), a list (membership), or a dict with
+# "gte"/"gt"/"lte"/"lt" range operators. Each VectorStore adapter translates
+# this into its own query dialect.
+Filter = dict[str, Any]
+
+
+# --------------------------------------------------------------------------
+# Loader output
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Block:
+    """One unit of extracted text with its structural position.
+
+    Blocks are flat and ordered, not a tree: each block carries a full
+    breadcrumb (`section_path`) to its position in the document's structure
+    rather than being nested inside a section object. This keeps the Loader
+    contract small and makes chunking a simple linear fold over `blocks`.
+    """
+
+    text: str
+    page: int | None
+    section_path: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Document:
+    """A single ingested file, fully extracted and structurally tagged."""
+
+    source_id: str
+    """Content-addressed id (sha256 of file bytes). Stable across re-ingestion
+    of the same file, which is what lets a later-built graph's edges stay
+    valid against re-ingested chunks."""
+
+    path: str
+    title: str | None
+    source_type: SourceType
+    blocks: list[Block]
+    meta: dict[str, Any] = field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------
+# Chunking output
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChunkMeta:
+    """Metadata carried by every chunk from ingestion through retrieval."""
+
+    # --- provenance ---
+    source_id: str
+    source_path: str
+    source_title: str | None
+    source_type: SourceType
+
+    # --- book structure ---
+    section_path: tuple[str, ...]
+    chapter: str | None
+    chapter_index: int | None
+    section: str | None
+    page_start: int | None
+    page_end: int | None
+
+    # --- position & identity ---
+    chunk_index: int
+    context_group_id: str
+    char_start: int
+    char_end: int
+    token_count: int
+
+    # --- extensibility ---
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class Chunk:
+    """A chunk of text plus its metadata, with an optional embedding vector.
+
+    `vector` is None as produced by a Chunker, populated by an Embedder, and
+    always present by the time a VectorStore persists it.
+    """
+
+    chunk_id: str
+    """f"{source_id}:{chunk_index}" — stable and content-addressed, so
+    re-ingesting the same file reproduces identical ids."""
+
+    text: str
+    meta: ChunkMeta
+    vector: Vector | None = None
+
+
+@dataclass(frozen=True)
+class ChunkGroup:
+    """A set of chunks embedded together, sharing one contextualization
+    window (e.g. one chapter).
+
+    Chunkers return groups rather than a flat chunk list specifically so
+    contextualized embedding is expressible: a group is exactly the unit an
+    Embedder.embed_groups() call contextualizes jointly. A chunker for a
+    non-contextual model can simply return one group per chunk.
+    """
+
+    group_id: str
+    chunks: list[Chunk]
+
+
+# --------------------------------------------------------------------------
+# Retrieval output
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Retrieved:
+    """One retrieval result: a chunk, its score, and optional graph
+    provenance.
+
+    `graph` is typed against ragcore.graph.types.GraphContext, which exists
+    today purely as a scaffold — no graph implementation ships yet. Until
+    one does, this field stays None. Consuming code that never reads it is
+    unaffected when a GraphRetriever is later wired in front of the vector
+    retriever (see ragcore.graph).
+    """
+
+    chunk: Chunk
+    score: float
+    graph: GraphContext | None = None
+
+
+# --------------------------------------------------------------------------
+# Corpus-level reporting
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SourceInfo:
+    """Summary of one ingested source, as returned by Corpus.sources()."""
+
+    source_id: str
+    path: str
+    title: str | None
+    source_type: SourceType
+    chunk_count: int
+
+
+@dataclass(frozen=True)
+class IngestProgress:
+    """Progress callback payload for Corpus.ingest()/ingest_many()."""
+
+    path: str
+    stage: Literal["loading", "chunking", "embedding", "storing", "done"]
+    chunks_done: int
+    chunks_total: int
+
+
+@dataclass(frozen=True)
+class IngestReport:
+    """Summary returned by Corpus.ingest()/ingest_many()."""
+
+    source_ids: list[str]
+    chunks_ingested: int
+    sources_replaced: list[str]
+    errors: list[tuple[str, str]]
+    """(path, error message) pairs for files that failed to ingest, when
+    ingest_many() is used in best-effort mode."""
