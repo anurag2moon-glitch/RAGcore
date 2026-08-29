@@ -5,10 +5,16 @@ extraction returns validated objects instead of freeform text to parse.
 Called once per ChunkGroup (chapter) by ragcore.graph.pipeline.build_graph
 — not per chunk — specifically so pronoun/reference resolution ("he", "his
 friend") has the whole chapter as context. Every input chunk is labeled
-with its real chunk_id in the prompt, and the model is required to cite
-those exact chunk_id strings on every entity and relation it extracts —
-the same grounded-citation pattern already used in
-ragcore.generation.claude.ClaudeGenerator._format_context.
+with a short numbered index (`[1]`, `[2]`, ...) in the prompt, matching the
+citation pattern ragcore.generation.claude.ClaudeGenerator._format_context
+already uses, and the model cites those numbers rather than real chunk_id
+strings. Numbers are remapped back to real chunk_ids in `extract()` after
+parsing — a real chunk_id (`{sha256}:{index}`) tokenizes to ~38 tokens per
+citation versus ~1 for a bare number, and a chapter's worth of entities and
+relations cites many of them, so this is a real, measured cost difference,
+not a style preference. Entity/Relation.source_chunk_ids are unaffected —
+they still hold real chunk_id strings; only the wire format between this
+class and the model changed.
 """
 
 from __future__ import annotations
@@ -40,21 +46,22 @@ else:
 SYSTEM_PROMPT = (
     "You extract named entities and relations between them from book text, for "
     "a knowledge graph. You are given every chunk of one chapter, in order, each "
-    "labeled with its chunk_id. Read them as a whole for context — resolve "
-    "pronouns and referring phrases (\"he\", \"his friend\", \"her mother\") to "
-    "the actual named entity they refer to using the surrounding text; never "
-    "extract a pronoun itself as a name.\n\n"
+    "labeled with a number in brackets, like [1]. Read them as a whole for "
+    "context — resolve pronouns and referring phrases (\"he\", \"his friend\", "
+    "\"her mother\") to the actual named entity they refer to using the "
+    "surrounding text; never extract a pronoun itself as a name.\n\n"
     "For every entity: give its fullest canonical name (e.g. \"Mr. Bingley\", not "
     "\"he\" or just \"Bingley\"), a type (open vocabulary: \"person\", \"place\", "
     "\"event\", or whatever fits), every distinct alias/surface form actually "
     "used to refer to it in this text (e.g. \"Bingley\", \"his friend\" — text "
-    "strings that appear, not bare pronouns), and the chunk_id(s) (from the "
-    "labels below) where it is mentioned.\n\n"
+    "strings that appear, not bare pronouns), and the bracketed number(s) of "
+    "the chunk(s) where it is mentioned (e.g. 1, 3 — not the text \"[1]\", just "
+    "the number itself).\n\n"
     "For every relation between two entities: give a relation_type (open "
     "vocabulary: \"spouse_of\", \"parent_of\", \"friend_of\", \"resides_at\", or "
     "a narrative-specific type if that fits better), reference the two entities "
-    "by the exact canonical names you gave them, and the chunk_id(s) where the "
-    "relation is stated or clearly implied.\n\n"
+    "by the exact canonical names you gave them, and the bracketed number(s) of "
+    "the chunk(s) where the relation is stated or clearly implied.\n\n"
     "Only extract what this text actually supports. Do not invent relations "
     "between entities that are never connected in the given text."
 )
@@ -64,14 +71,14 @@ class _ExtractedEntity(BaseModel):
     name: str
     entity_type: str
     aliases: list[str] = []
-    chunk_ids: list[str]
+    chunk_indices: list[int]
 
 
 class _ExtractedRelation(BaseModel):
     source_name: str
     target_name: str
     relation_type: str
-    chunk_ids: list[str]
+    chunk_indices: list[int]
 
 
 class _ExtractionResult(BaseModel):
@@ -88,8 +95,12 @@ def _entity_id(entity_type: str, name: str) -> str:
     return f"entity:{entity_type}:{_normalize(name)}"
 
 
-def _format_chunks(chunks: Sequence[Chunk]) -> str:
-    return "\n\n".join(f"[chunk_id: {c.chunk_id}]\n{c.text}" for c in chunks)
+def _format_chunks(chunks: Sequence[Chunk]) -> tuple[str, dict[int, str]]:
+    """Returns the numbered prompt text plus the index->chunk_id mapping
+    needed to resolve the model's citations back to real chunk_ids."""
+    index_to_chunk_id = {i: c.chunk_id for i, c in enumerate(chunks, start=1)}
+    text = "\n\n".join(f"[{i}]\n{c.text}" for i, c in enumerate(chunks, start=1))
+    return text, index_to_chunk_id
 
 
 class ClaudeEntityExtractor:
@@ -121,7 +132,13 @@ class ClaudeEntityExtractor:
         if not chunks:
             return [], []
 
-        parsed = self._call_with_retry(_format_chunks(chunks))
+        formatted, index_to_chunk_id = _format_chunks(chunks)
+        parsed = self._call_with_retry(formatted)
+
+        def _resolve(indices: list[int]) -> tuple[str, ...]:
+            # Silently drop any index outside the range we gave the model —
+            # a hallucinated citation, not a crash-worthy error.
+            return tuple(index_to_chunk_id[i] for i in indices if i in index_to_chunk_id)
 
         entities: list[Entity] = []
         name_to_id: dict[str, str] = {}
@@ -133,7 +150,7 @@ class ClaudeEntityExtractor:
                     entity_id=entity_id,
                     name=e.name,
                     entity_type=e.entity_type,
-                    source_chunk_ids=tuple(e.chunk_ids),
+                    source_chunk_ids=_resolve(e.chunk_indices),
                     extra={"aliases": e.aliases} if e.aliases else {},
                 )
             )
@@ -150,7 +167,7 @@ class ClaudeEntityExtractor:
                     source_entity_id=source_id,
                     target_entity_id=target_id,
                     relation_type=r.relation_type,
-                    source_chunk_ids=tuple(r.chunk_ids),
+                    source_chunk_ids=_resolve(r.chunk_indices),
                 )
             )
 
