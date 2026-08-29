@@ -209,3 +209,77 @@ def test_embedding_entity_resolver_merges_similar_rejects_dissimilar() -> None:
     existing = [darcy, bingley]
     assert resolver.resolve(similar_candidate, existing) == "entity:person:mr-darcy"
     assert resolver.resolve(dissimilar_candidate, existing) is None
+
+
+def test_relation_hints_can_recover_a_match_that_names_alone_would_miss() -> None:
+    """The cheap mitigation for relationally-described entities: when two
+    candidates share no name/alias overlap at all, but both carry a
+    relation hint mentioning the same already-linked partner, the embedder
+    sees shared vocabulary it wouldn't otherwise have. This is a partial,
+    not general, fix — see ragcore.graph.resolver._entity_text and
+    CLAUDE.md's "Known limitation: relationally-described entities" for
+    exactly what it does and doesn't solve.
+    """
+
+    class _StubEmbedder:
+        def __init__(self, vectors: dict[str, list[float]]) -> None:
+            self._vectors = vectors
+
+        def embed_groups(self, groups, *, input_type="document"):
+            return [[self._vectors[text] for text in group] for group in groups]
+
+    existing = Entity(
+        entity_id="entity:person:jane-smith",
+        name="Jane Smith",
+        entity_type="person",
+        source_chunk_ids=("c1",),
+        extra={"relations": ["parent_of Mr. Smith"]},
+    )
+    # No lexical overlap with "Jane Smith" at all — only recoverable via
+    # the shared relational vocabulary in extra["relations"].
+    candidate = Entity(
+        entity_id="entity:person:the-mystery-daughter",
+        name="the mystery daughter",
+        entity_type="person",
+        source_chunk_ids=("c5",),
+        extra={"relations": ["parent_of Mr. Smith"]},
+    )
+    unrelated_existing = Entity(
+        entity_id="entity:person:someone-else",
+        name="Someone Else",
+        entity_type="person",
+        source_chunk_ids=("c9",),
+        extra={"relations": ["spouse_of Mr. Jones"]},
+    )
+
+    vectors = {
+        "person: Jane Smith [parent_of Mr. Smith]": [1.0, 0.0],
+        "person: the mystery daughter [parent_of Mr. Smith]": [0.99, 0.02],
+        "person: Someone Else [spouse_of Mr. Jones]": [-1.0, 0.0],
+    }
+    resolver = EmbeddingEntityResolver(_StubEmbedder(vectors), threshold=0.9)
+
+    assert resolver.resolve(candidate, [existing, unrelated_existing]) == "entity:person:jane-smith"
+
+
+def test_sqlite_store_accumulates_relation_hints_across_merges() -> None:
+    """Mirrors the existing alias-accumulation guarantee: extra["relations"]
+    unions across merges into the same content-addressed id, rather than
+    the later write clobbering the earlier one."""
+    graph = SqliteGraphStore(":memory:")
+
+    graph.add_entities(
+        [
+            Entity(entity_id="entity:person:x", name="X", entity_type="person",
+                   source_chunk_ids=("c1",), extra={"relations": ["parent_of Y"]})
+        ]
+    )
+    graph.add_entities(
+        [
+            Entity(entity_id="entity:person:x", name="X", entity_type="person",
+                   source_chunk_ids=("c2",), extra={"relations": ["spouse_of Z"]})
+        ]
+    )
+
+    stored = graph.entities_for_chunks(["c1"])["c1"][0]
+    assert set(stored.extra["relations"]) == {"parent_of Y", "spouse_of Z"}

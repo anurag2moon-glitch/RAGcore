@@ -51,17 +51,69 @@ implementation and the thing to compare a new `GraphStore` against.
 
 Entity/relation ids are content-addressed (`entity:{type}:{normalized_name}`,
 `relation:{type}:{source_id}:{target_id}`), not random — this is what makes
-`build_graph()` idempotent and lets most within-book alias collisions
-("Bingley" vs "Mr. Bingley") collapse for free at extraction time, before
-`EmbeddingEntityResolver` (which reuses the Corpus's own `Embedder` — no
-separate model) is ever consulted. The resolver mainly earns its cost
-*across* books, where the same thing gets a differently-worded canonical
-name per source.
+`build_graph()` idempotent, and lets an exact repeated canonical name collapse
+for free (no resolver call at all) the moment it recurs. It does **not**
+mean cross-chapter aliasing is rare: tested against real Chapters I-III of
+*Pride and Prejudice*, "Bingley" (Ch. I) and "Mr. Bingley" (Ch. II/III) — the
+same person, independently canonicalized per chapter — needed
+`EmbeddingEntityResolver` to merge, and needed it *again* in Ch. III even
+though Ch. II had already resolved it (a fresh extraction call regenerates
+the candidate's *own* id from its own chosen name every time, regardless of
+what it previously got merged into). The resolver is not a rare-path
+across-books-only mechanism — expect it to fire often, even within one book,
+whenever per-chapter extraction naming isn't perfectly consistent.
 
 `build_graph()` calls `EntityExtractor.extract()` once per chapter
 (`context_group_id`), not per chunk — pronoun/reference resolution ("he",
 "his friend") needs chapter-level context, the same reason embeddings are
 contextualized at chapter granularity.
+
+## Known limitation: relationally-described entities
+
+`EmbeddingEntityResolver` compares entity *text* (name + aliases, now also a
+short relation summary — see below). It has no signal at all for an entity
+introduced only by relational description, never by name. Real case found
+testing against Ch. III: Darcy/Bingley's ballroom exchange refers to Jane
+only as **"the eldest Miss Bennet"** — a Regency courtesy-title convention
+(the eldest unmarried daughter is "Miss Surname", no first name) — while
+"Jane" as a name only appears back in Chapter I. Per-chapter extraction
+produces two separate candidates; nothing in the resolver's text-similarity
+comparison connects "the eldest Miss Bennet" to "Jane" — there's no shared
+vocabulary, only plot knowledge a pure text embedder doesn't have.
+
+**Mitigation shipped:** `ragcore.graph.pipeline.build_graph` now attaches a
+short relation summary to each candidate before resolution — e.g. "the
+eldest Miss Bennet" gets `extra["relations"] = ["danced_with Mr. Bingley"]`
+— and `_entity_text` (`ragcore/graph/resolver.py`) folds it into the
+embedded text. `SqliteGraphStore._merge_extra` accumulates it across merges
+the same way it does aliases. This is a **partial** fix: it only helps when
+the two candidates happen to share a relation to an entity that's *already*
+linked under the same id on both sides. It would not have fixed the Jane
+case above on its own — Jane's Chapter I mention carries no relation at all
+in our test fixture, so there's nothing to overlap with "danced_with Mr.
+Bingley". It helps a real but narrower slice of cases than the general
+problem.
+
+**Why the full mechanism (cardinality-aware relational resolution) wasn't
+built:** the natural extension — treat entities sharing relations as likely
+duplicates — is actively dangerous for exactly the family-relation case
+that motivates it. Every Bennet daughter (Jane, Elizabeth, Kitty, Lydia,
+Mary) shares `parent_of ← Mr. Bennet`, attends the same ball, gets discussed
+in the same conversations — naive relational similarity would tend to merge
+*siblings*, not resolve aliases. Making it safe requires: (1) an extraction
+schema with **cardinality-aware relation types** (`eldest_daughter_of`, not
+generic `parent_of` — a type where at most one entity can hold it for a
+given parent), (2) resolver logic that recognizes which relation types are
+functionally unique and treats a collision on those as a near-deterministic
+merge signal, and (3) in general, actually *establishing* the qualifying
+fact (e.g. Jane's birth order is never stated outright near her Ch. I
+mention — nothing in this fixture's relations would let you infer "Jane is
+eldest" even with cardinality reasoning). That's a real feature, not a
+tweak, and the failure mode is more a 19th-century-prose convention
+(courtesy titles, epithets) than something expected in a nonfiction corpus
+whose concepts are named directly and consistently. Revisit only if real
+usage on the actual target book(s) shows this costing retrieval/graph
+quality often enough to justify the complexity — not pre-emptively.
 
 ## Local dev
 

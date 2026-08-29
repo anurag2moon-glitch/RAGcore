@@ -43,9 +43,30 @@ def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
 
 
 def _entity_text(entity: Entity) -> str:
+    """Text embedded for similarity comparison. Includes known relations
+    (`extra["relations"]`, short strings like "danced_with Mr. Bingley" —
+    populated by ragcore.graph.pipeline.build_graph from same-batch
+    extraction results, and accumulated across merges by GraphStore
+    implementations) alongside name/aliases.
+
+    This is a deliberately cheap, partial mitigation for a known gap: an
+    entity introduced only by relational description ("the eldest Miss
+    Bennet") has no name to lexically match against. Giving the embedder
+    shared relational vocabulary (e.g. both entities' text mentioning "Mr.
+    Bennet") sometimes recovers the match — but only when the two mentions
+    actually share a common, already-linked entity; it is not a general
+    fix. See CLAUDE.md's "Known limitation: relationally-described
+    entities" for why a more complete fix (cardinality-aware relation
+    reasoning) was deliberately not built.
+    """
     aliases = entity.extra.get("aliases") or []
-    alias_part = f" (aka {', '.join(aliases)})" if aliases else ""
-    return f"{entity.entity_type}: {entity.name}{alias_part}"
+    relations = entity.extra.get("relations") or []
+    text = f"{entity.entity_type}: {entity.name}"
+    if aliases:
+        text += f" (aka {', '.join(aliases)})"
+    if relations:
+        text += f" [{'; '.join(relations)}]"
+    return text
 
 
 class EmbeddingEntityResolver:

@@ -85,9 +85,33 @@ def build_graph(
             candidate_entities, candidate_relations = extractor.extract(chapter_chunks)
             chunks_processed += len(chapter_chunks)
 
+            # Cheap resolution aid: give each candidate a short summary of
+            # its same-batch relations (e.g. "danced_with Mr. Bingley"), so
+            # EmbeddingEntityResolver has shared relational vocabulary to
+            # compare against, not just name/aliases — helps exactly (and
+            # only) entities introduced by relational description rather
+            # than name ("the eldest Miss Bennet"). Persisted into
+            # extra["relations"] on storage, and GraphStore implementations
+            # accumulate it across merges the same way they do aliases. See
+            # CLAUDE.md's "Known limitation: relationally-described
+            # entities" for what this does and doesn't solve.
+            id_to_name = {e.entity_id: e.name for e in candidate_entities}
+            relation_hints: dict[str, list[str]] = {}
+            for rel in candidate_relations:
+                src_name = id_to_name.get(rel.source_entity_id, rel.source_entity_id)
+                tgt_name = id_to_name.get(rel.target_entity_id, rel.target_entity_id)
+                relation_hints.setdefault(rel.source_entity_id, []).append(f"{rel.relation_type} {tgt_name}")
+                relation_hints.setdefault(rel.target_entity_id, []).append(f"{rel.relation_type} {src_name}")
+
             id_remap: dict[str, str] = {}
             resolved_entities: list[Entity] = []
             for candidate in candidate_entities:
+                hints = relation_hints.get(candidate.entity_id)
+                if hints:
+                    candidate = dataclasses.replace(
+                        candidate, extra={**candidate.extra, "relations": hints}
+                    )
+
                 existing_same_type = store.entities_by_type(candidate.entity_type)
                 existing_ids = {e.entity_id for e in existing_same_type}
 

@@ -19,14 +19,20 @@ from typing import Sequence
 
 from ragcore.graph.types import Entity, Relation
 
+# extra fields that accumulate (set-union) across merges rather than being
+# overwritten by the latest write — aliases and relation hints both grow
+# monotonically as more chapters mention the same entity. See
+# ragcore.graph.resolver._entity_text for why "relations" exists at all.
+_LIST_MERGE_KEYS = ("aliases", "relations")
+
 
 def _merge_extra(old: dict, new: dict) -> dict:
     merged = dict(old)
     merged.update(new)
-    old_aliases = set(old.get("aliases") or [])
-    new_aliases = set(new.get("aliases") or [])
-    if old_aliases or new_aliases:
-        merged["aliases"] = sorted(old_aliases | new_aliases)
+    for key in _LIST_MERGE_KEYS:
+        combined = set(old.get(key) or []) | set(new.get(key) or [])
+        if combined:
+            merged[key] = sorted(combined)
     return merged
 
 

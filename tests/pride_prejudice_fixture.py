@@ -206,7 +206,18 @@ class StubEmbedder:
     ]
 
     def _vector(self, text: str) -> list[float]:
-        lowered = text.lower()
+        # Match only the entity's own name/aliases (text before the first
+        # "[...]" relation-hint block ragcore.graph.resolver._entity_text
+        # appends) — not the full enriched text. Substring-matching the
+        # whole thing would let a relation hint mentioning another entity's
+        # name (e.g. Mrs. Bennet's hint text containing "Mr. Bennet")
+        # collide with an earlier-ordered rule and misclassify her, since
+        # this is plain substring matching with no positional awareness.
+        # A real embedding model doesn't have this specific failure mode —
+        # this guard is fixture-only, not something ragcore's resolver
+        # itself needs to worry about.
+        core_text = text.split(" [", 1)[0]
+        lowered = core_text.lower()
         for phrase, axis in self._RULES:
             if phrase in lowered:
                 v = [0.0] * len(self._AXES)
