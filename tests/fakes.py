@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import math
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 from ragcore.generation.base import Answer
+from ragcore.graph.types import Entity, Relation
 from ragcore.types import Chunk, Filter, Retrieved, SourceInfo, Vector
 
 
@@ -101,6 +102,11 @@ class InMemoryStore:
     def get(self, chunk_ids: Sequence[str]) -> list[Chunk]:
         return [self._chunks[i] for i in chunk_ids if i in self._chunks]
 
+    def get_by_source(self, source_id: str) -> list[Chunk]:
+        chunks = [c for c in self._chunks.values() if c.meta.source_id == source_id]
+        chunks.sort(key=lambda c: c.meta.chunk_index)
+        return chunks
+
     def delete(self, *, source_id: str | None = None, chunk_ids: Sequence[str] | None = None) -> int:
         before = len(self._chunks)
         if source_id is not None:
@@ -153,3 +159,21 @@ class FakeGenerator:
         self.calls.append((query, chunk_ids))
         text = f"[fake answer to {query!r} using {len(chunk_ids)} chunk(s): {chunk_ids}]"
         return Answer(text=text, citations=list(context))
+
+
+class FakeEntityExtractor:
+    """Deterministic EntityExtractor double: returns whatever `fn` says for
+    a given batch of chunks (no network, no LLM). Records the chunk_ids it
+    was called with, per call, so a test can assert build_graph() actually
+    grouped chunks by chapter before calling extract() (one call per
+    ChunkGroup, not one call for everything or one per chunk)."""
+
+    def __init__(
+        self, fn: Callable[[Sequence[Chunk]], tuple[list[Entity], list[Relation]]]
+    ) -> None:
+        self._fn = fn
+        self.calls: list[list[str]] = []
+
+    def extract(self, chunks: Sequence[Chunk]) -> tuple[list[Entity], list[Relation]]:
+        self.calls.append([c.chunk_id for c in chunks])
+        return self._fn(chunks)

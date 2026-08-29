@@ -37,6 +37,13 @@ class VectorStore(Protocol):
         that care re-key by chunk_id."""
         ...
 
+    def get_by_source(self, source_id: str) -> list[Chunk]:
+        """All chunks belonging to one source, ordered by chunk_index. Graph
+        construction (ragcore.graph.pipeline.build_graph) uses this to
+        re-group a source's chunks into their chapters (context_group_id)
+        without enumerating chunk_ids up front."""
+        ...
+
     def delete(
         self,
         *,

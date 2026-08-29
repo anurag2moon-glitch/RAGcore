@@ -33,9 +33,11 @@ def test_store_get_roundtrips_by_chunk_id(md_book: Path) -> None:
 
 
 def test_graph_protocols_are_structurally_satisfiable() -> None:
-    """No graph implementation ships yet, but the protocols must be usable
-    by one: a minimal conforming stub should type-check as both protocols
-    via isinstance (they're @runtime_checkable)."""
+    """Real implementations exist now (SqliteGraphStore, ClaudeEntityExtractor
+    — see tests/test_graph_construction.py), but any consumer's own
+    implementation must also be usable: a minimal conforming stub should
+    still type-check as both protocols via isinstance (they're
+    @runtime_checkable)."""
 
     class StubGraphStore:
         def add_entities(self, entities): ...
@@ -43,6 +45,7 @@ def test_graph_protocols_are_structurally_satisfiable() -> None:
         def neighbors(self, entity_ids, *, hops=1, rel_types=None): return []
         def entities_for_chunks(self, chunk_ids): return {}
         def chunks_for_entities(self, entity_ids): return {}
+        def entities_by_type(self, entity_type): return []
 
     class StubExtractor:
         def extract(self, chunks): return [], []

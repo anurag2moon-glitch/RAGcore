@@ -1,12 +1,11 @@
 """Protocols for the GraphRAG layer.
 
-Scaffold only — see ragcore/graph/types.py and the module docstring there.
 `GraphStore` and `EntityExtractor` are the entire integration seam between
-the future graph layer and the rest of ragcore: both operate purely in
-terms of `Chunk.chunk_id` strings and never import anything from
-`ragcore.stores` or `ragcore.embedding`. A `GraphRetriever` (added when the
-graph layer lands) composes a `Retriever` with a `GraphStore` by reading
-chunks back out of a `Corpus` via `VectorStore.get()`.
+the graph layer and the rest of ragcore: both operate purely in terms of
+`Chunk.chunk_id` strings and never import anything from `ragcore.stores` or
+`ragcore.embedding`. `GraphRetriever` (`ragcore/retrieval/graph.py`)
+composes a `Retriever` with a `GraphStore` by reading chunks back out of a
+`Corpus` via `VectorStore.get()`.
 """
 
 from __future__ import annotations
@@ -48,6 +47,11 @@ class GraphStore(Protocol):
     def entities_for_chunks(self, chunk_ids: Sequence[str]) -> dict[str, list[Entity]]: ...
 
     def chunks_for_entities(self, entity_ids: Sequence[str]) -> dict[str, list[str]]: ...
+
+    def entities_by_type(self, entity_type: str) -> list[Entity]:
+        """All known entities of one type. Used by entity resolution to find
+        merge candidates — see ragcore.graph.resolver."""
+        ...
 
 
 @runtime_checkable

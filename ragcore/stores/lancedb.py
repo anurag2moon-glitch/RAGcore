@@ -222,6 +222,17 @@ class LanceDBStore:
         rows = self._table.search().where(f"chunk_id IN ({id_list})").limit(len(chunk_ids)).to_list()
         return [_row_to_chunk(row) for row in rows]
 
+    def get_by_source(self, source_id: str) -> list[Chunk]:
+        rows = (
+            self._table.search()
+            .where(f"source_id = {_sql_literal(source_id)}")
+            .limit(self.count())
+            .to_list()
+        )
+        chunks = [_row_to_chunk(row) for row in rows]
+        chunks.sort(key=lambda c: c.meta.chunk_index)
+        return chunks
+
     def delete(
         self, *, source_id: str | None = None, chunk_ids: Sequence[str] | None = None
     ) -> int:

@@ -1,15 +1,24 @@
-"""GraphRAG layer — scaffold only.
+"""GraphRAG layer: entity/relation extraction, graph construction, and
+graph-aware retrieval, attached in front of vector retrieval without any
+change to ragcore.stores, ragcore.embedding, ragcore.chunking, or
+ragcore.loaders — see the design doc's GraphRAG addendum for the full
+rationale.
 
-Defines the types and protocols (`GraphStore`, `EntityExtractor`) that a
-future graph implementation will satisfy. No graph construction, extraction,
-or graph-aware retrieval ships here yet; see ragcore/graph/base.py and
-ragcore/graph/types.py for the contracts, and the design doc for how a
-`GraphRetriever` will later compose in front of the vector retriever without
-any change to ragcore.stores, ragcore.embedding, ragcore.chunking, or
-ragcore.loaders.
+    from ragcore.graph import (
+        Entity, Relation, GraphContext,       # types
+        GraphStore, EntityExtractor,          # protocols
+        EntityResolver, EmbeddingEntityResolver,
+        SqliteGraphStore, ClaudeEntityExtractor,  # default implementations
+        build_graph, GraphReport,             # construction pass
+    )
+    from ragcore.retrieval.graph import GraphRetriever  # graph-aware Retriever
 """
 
 from ragcore.graph.base import EntityExtractor, GraphStore
+from ragcore.graph.claude_extractor import ClaudeEntityExtractor
+from ragcore.graph.pipeline import GraphReport, build_graph
+from ragcore.graph.resolver import EmbeddingEntityResolver, EntityResolver
+from ragcore.graph.sqlite_store import SqliteGraphStore
 from ragcore.graph.types import Entity, GraphContext, Relation
 
 __all__ = [
@@ -18,4 +27,10 @@ __all__ = [
     "GraphContext",
     "GraphStore",
     "EntityExtractor",
+    "EntityResolver",
+    "EmbeddingEntityResolver",
+    "SqliteGraphStore",
+    "ClaudeEntityExtractor",
+    "build_graph",
+    "GraphReport",
 ]

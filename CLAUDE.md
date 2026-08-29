@@ -2,10 +2,11 @@
 
 Reusable retrieval layer for RAG: structure-aware ingestion for long-form
 books (PDF, EPUB, DOCX, TXT, MD), a swappable embedder/vector store/generator,
-and a GraphRAG layer designed in but not yet built. Library, not application —
-no CLI, no server, no global state; consuming projects `import ragcore` and
-drive it. See `~/.claude/plans/i-m-building-a-reusable-cosmic-quasar.md` for
-the full design rationale and decision history.
+and a GraphRAG layer (entity/relation extraction, graph construction,
+graph-aware retrieval) on top. Library, not application — no CLI, no server,
+no global state; consuming projects `import ragcore` and drive it. See
+`~/.claude/plans/i-m-building-a-reusable-cosmic-quasar.md` for the full
+design rationale and decision history.
 
 ## `chapter_title` vs `chapter_index`
 
@@ -36,6 +37,31 @@ the full design rationale and decision history.
   allowlist (see `_FILTERABLE_FIELDS` in `ragcore/stores/lancedb.py`) —
   filtering on it raises `StoreError`. Any future `VectorStore` backend
   should keep that restriction.
+
+## GraphRAG: `add_entities`/`add_relations` merge, not replace
+
+Unlike `VectorStore.upsert()` (replace-by-id), every `GraphStore`
+implementation must **merge** when a content-addressed entity/relation id
+already exists — union `source_chunk_ids` and `extra["aliases"]`, don't
+overwrite them. The same fact (e.g. a friendship) is often restated across
+chapters; every restatement's chunk should accumulate as provenance. This
+is easy to get backwards if you port the vector store's mental model over —
+`SqliteGraphStore` (`ragcore/graph/sqlite_store.py`) is the reference
+implementation and the thing to compare a new `GraphStore` against.
+
+Entity/relation ids are content-addressed (`entity:{type}:{normalized_name}`,
+`relation:{type}:{source_id}:{target_id}`), not random — this is what makes
+`build_graph()` idempotent and lets most within-book alias collisions
+("Bingley" vs "Mr. Bingley") collapse for free at extraction time, before
+`EmbeddingEntityResolver` (which reuses the Corpus's own `Embedder` — no
+separate model) is ever consulted. The resolver mainly earns its cost
+*across* books, where the same thing gets a differently-worded canonical
+name per source.
+
+`build_graph()` calls `EntityExtractor.extract()` once per chapter
+(`context_group_id`), not per chunk — pronoun/reference resolution ("he",
+"his friend") needs chapter-level context, the same reason embeddings are
+contextualized at chapter granularity.
 
 ## Local dev
 
