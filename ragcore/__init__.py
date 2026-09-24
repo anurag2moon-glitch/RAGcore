@@ -14,10 +14,21 @@ Generator. Each of those is a `typing.Protocol` (see
 ragcore.{loaders,chunking,embedding,stores,generation}.base) so any
 component can be swapped without touching the others. `Corpus.retrieve()`
 returns raw chunks; `Corpus.ask()` additionally synthesizes an answer via a
-configured Generator — retrieval works with no Generator at all. A GraphRAG
-layer is scaffolded in ragcore.graph (types + protocols only, no
-implementation yet) and will attach in front of retrieval without changing
-this surface — see the design notes in the project plan for how.
+configured Generator — retrieval works with no Generator at all.
+
+Two optional layers attach in front of retrieval/generation without
+changing `Corpus` itself, through the existing `corpus.retriever` /
+`corpus.generator` seams:
+
+    from ragcore.graph import build_graph, SqliteGraphStore, ClaudeEntityExtractor
+    from ragcore.retrieval.graph import GraphRetriever          # entity-graph-aware retrieval
+    from ragcore.concepts import build_concepts, detect_communities, ...
+    from ragcore.retrieval.concept import ConceptRetriever      # concept-graph-aware retrieval
+    from ragcore.retrieval.mmr import MMRReranker                # diversity reranking
+    from ragcore.verification import ClaudeVerifier, VerifyingGenerator  # citation verification
+
+    corpus.retriever = MMRReranker(ConceptRetriever(GraphRetriever(corpus.retriever, ...), ...))
+    corpus.generator = VerifyingGenerator(corpus.generator, ClaudeVerifier())
 """
 
 from ragcore.corpus import Corpus
