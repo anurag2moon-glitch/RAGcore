@@ -207,6 +207,65 @@ adds two per `ask()` (decompose, then check). Both are opt-in decorators —
 wiring nothing new leaves `ask()`'s cost and behavior identical to before
 this layer existed.
 
+## Claim extraction and linking layer (`ragcore/claims/`)
+
+A storage-only layer built for a product where each persona (author/
+philosopher) a user can converse with has its **own `Corpus` and own
+`ClaimStore`** — not a shared multi-persona store. This is a load-bearing
+assumption: `ragcore/claims/` has no persona/author field anywhere in it,
+and `link_claims()` compares every claim reachable in one `ClaimStore`
+without partitioning, because "no cross-persona linking" is true by
+construction (there is no shared store for it to happen in), not because of
+a filter. If a future deployment ever needs several personas in one shared
+store, `link_claims()` would need an explicit grouping key added — this
+codebase does not have one today.
+
+`build_claims()` extracts atomic `SourceClaim`s per chapter, each anchored
+to one or more of that chapter's already-extracted `Concept`s (from
+`ragcore/concepts/`) — **it must run after `build_concepts()`**, and
+`ragcore.versioning.sync.sync_corpus` enforces that ordering for you. A
+chapter with no concepts yet (concepts layer not built, or that chapter's
+concept extraction failed) is skipped with **no checkpoint row written at
+all**, so it's picked up for free once concepts catch up, rather than being
+permanently skipped. The checkpoint fingerprint includes the chapter's
+concept_ids, not just its chunk_ids — `build_concepts()`'s resolver can
+remap concept ids between runs even when a chapter's own chunks haven't
+changed, and without this term a claim could stay checkpointed "done"
+pointing at a concept id that no longer exists.
+
+`SourceClaim.claim_id` is content-addressed over `(source_id, chunk_id,
+normalized_text)` — **never text alone**: hashing text alone would collapse
+two different sources independently asserting the same thing into one row,
+destroying the agreement signal this layer exists to capture.
+
+`link_claims()` finds `agrees`/`conflicts`/`extends` relations between
+claims anchored to the same concept. It does **not** send a concept's full
+claim set to the linker in one call — a popular concept can accumulate
+hundreds of claims, and `ragcore.concepts.communities._sample_chunks_round_robin`'s
+lossy sampling was considered and rejected here, since a different random
+sample on an *unchanged* corpus would produce a different relation set. It
+instead reuses `ClaudeConceptMapper`'s embedding-shortlist pattern: each
+claim's own persisted vector picks its nearest neighbors within the concept
+group as candidates, batched into fixed-size groups per `linker.link()`
+call. Duplicate relations from overlapping batches collapse for free —
+`ClaimRelation.relation_id` bakes the relation type into the id
+(`agrees`/`conflicts` sort their two endpoints since they're symmetric;
+`extends` keeps direction), so `ClaimStore.put_relations` merging by id is
+enough, with no separate dedup pass.
+
+Each claim carries `author_confidence` ("firm" or "hedged"), judged **only**
+from that exact passage's own hedging language — never from whether the
+claim agrees with the author's other claims. This is deliberately kept
+independent of `agrees`/`conflicts`/`extends`: this layer never resolves
+which claim is "right" or decides what a persona should say about a
+tension in its own corpus — a later, domain-specific layer (not part of
+this codebase) is expected to read both signals to decide, e.g., whether to
+present a later claim as a refinement of an earlier one, and whether to
+preserve or invent hedging in a generated answer. **Nothing in
+`ragcore.generation` or `ragcore.verification` reads this layer**, and it
+has no retriever of its own (like `ragcore/eval`) — it is meant to be built
+on top of, not consumed directly by anything in this codebase yet.
+
 ## Hybrid retrieval, contextual embeddings, eval harness, multi-hop, cross-encoder, hierarchy, incremental ingestion
 
 Seven more layers, added in one pass, following the same conventions as the
@@ -300,8 +359,10 @@ each item for why.
   uses). `sync_corpus()` orchestrates: snapshot (if enabled) → prune
   removed/changed sources from *every* provided store, before any rebuild →
   ingest new/changed paths → re-run every LLM-backed pass **scoped to only
-  the new/changed source_ids** → re-run the corpus-global concept-community
-  passes unscoped (already self-checkpointing). **A real latent
+  the new/changed source_ids** (`build_claims` runs immediately after
+  `build_concepts` here — see "Claim extraction and linking layer" above for
+  why the order matters) → re-run the corpus-global concept-community and
+  claim-linking passes unscoped (already self-checkpointing). **A real latent
   characteristic of `Corpus.ingest()` this surfaces, not one it
   introduces**: since `source_id` is a content hash, a changed file
   computes a brand-new one, so `ingest(replace=True)`'s
@@ -311,7 +372,9 @@ each item for why.
   looks up the *old* source_id by path and prunes it explicitly.
   `SqliteGraphStore`/`SqliteConceptStore` gained their first-ever removal
   methods (`remove_chunk_ids`/`remove_source`) for this — previously purely
-  additive. Rollback: `LanceDBStore.snapshot()`/`restore_snapshot()` use
+  additive; `SqliteClaimStore` has them from the start, including cascading
+  a claim's removal to every `ClaimRelation` touching it in either
+  direction. Rollback: `LanceDBStore.snapshot()`/`restore_snapshot()` use
   LanceDB's own native tag/restore API (append-only — a rollback is itself
   a new version, never destroys history); every SQLite store gained
   `backup_to()`/`restore_from_backup()` using the **stdlib sqlite3 online

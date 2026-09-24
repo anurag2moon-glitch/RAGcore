@@ -26,6 +26,7 @@ changing `Corpus` itself, through the existing `corpus.retriever` /
     from ragcore.retrieval.concept import ConceptRetriever      # concept-graph-aware retrieval
     from ragcore.retrieval.mmr import MMRReranker                # diversity reranking
     from ragcore.verification import ClaudeVerifier, VerifyingGenerator  # citation verification
+    from ragcore.claims import build_claims, link_claims, SqliteClaimStore  # claim extraction/linking (storage only, no retriever)
 
     corpus.retriever = MMRReranker(ConceptRetriever(GraphRetriever(corpus.retriever, ...), ...))
     corpus.generator = VerifyingGenerator(corpus.generator, ClaudeVerifier())

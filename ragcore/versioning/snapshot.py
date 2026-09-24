@@ -27,7 +27,7 @@ from ragcore.versioning.types import Snapshot
 
 DEFAULT_MAX_SNAPSHOTS = 10
 
-_STORE_NAMES = ("graph", "concepts", "hierarchy", "context", "lexical")
+_STORE_NAMES = ("graph", "concepts", "hierarchy", "context", "lexical", "claims")
 
 
 def create_snapshot(
@@ -41,6 +41,7 @@ def create_snapshot(
     hierarchy_store: Any = None,
     context_store: Any = None,
     lexical: Any = None,
+    claim_store: Any = None,
     max_snapshots: int = DEFAULT_MAX_SNAPSHOTS,
 ) -> Snapshot:
     manifest.begin_snapshot(tag)
@@ -55,7 +56,11 @@ def create_snapshot(
             _apply_retention(vector_store, max_snapshots)
 
     stores = dict(
-        zip(_STORE_NAMES, (graph_store, concept_store, hierarchy_store, context_store, lexical), strict=True)
+        zip(
+            _STORE_NAMES,
+            (graph_store, concept_store, hierarchy_store, context_store, lexical, claim_store),
+            strict=True,
+        )
     )
     backups: dict[str, str] = {}
     for name, store in stores.items():
@@ -87,6 +92,7 @@ def rollback(
     hierarchy_store: Any = None,
     context_store: Any = None,
     lexical: Any = None,
+    claim_store: Any = None,
 ) -> None:
     snapshot = manifest.get_snapshot(tag)
     if snapshot is None:
@@ -101,7 +107,11 @@ def rollback(
         vector_store.restore_snapshot(tag)
 
     stores = dict(
-        zip(_STORE_NAMES, (graph_store, concept_store, hierarchy_store, context_store, lexical), strict=True)
+        zip(
+            _STORE_NAMES,
+            (graph_store, concept_store, hierarchy_store, context_store, lexical, claim_store),
+            strict=True,
+        )
     )
     for name, store in stores.items():
         backup_path = snapshot.backups.get(name)

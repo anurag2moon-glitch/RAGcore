@@ -1,7 +1,7 @@
 """plan_sync / sync_corpus — incremental ingestion: detect new, changed, or
 removed documents against an IngestionManifest, and update only the
 affected vector store entries, lexical index, entity/concept graph nodes
-and edges, hierarchy nodes, and contextual-embedding blurbs.
+and edges, hierarchy nodes, contextual-embedding blurbs, and claims/relations.
 
 **A latent characteristic of `Corpus.ingest()` this module exists to work
 around, not one it introduces**: `Document.source_id` is a content hash
@@ -27,11 +27,15 @@ Order of operations in `sync_corpus`, and why it matters:
    of two generations of the same source.
 4. Ingest new/changed paths (fresh source_ids), update the manifest.
 5. Re-run every LLM-backed pass *scoped to only the new/changed source_ids*
-   — build_graph/build_concepts/build_contextual_embeddings/build_hierarchy
-   all already support (or, for the two added this session, were built to
-   support) a `source_ids` filter, so no new capability was needed here.
-6. Re-run the corpus-global concept-community passes unscoped — both are
-   already checkpointed and no-op when nothing relevant changed.
+   — build_graph/build_concepts/build_contextual_embeddings/build_hierarchy/
+   build_claims all already support (or were built to support) a
+   `source_ids` filter, so no new capability was needed here.
+   `build_claims` runs immediately after `build_concepts` in this step —
+   ordering is load-bearing: a chapter's claims anchor to that chapter's
+   just-updated concept menu (see ragcore.claims.pipeline.build_claims).
+6. Re-run the corpus-global concept-community and claim-linking passes
+   unscoped — all are already checkpointed and no-op when nothing relevant
+   changed.
 """
 
 from __future__ import annotations
@@ -92,6 +96,9 @@ def sync_corpus(
     context_store: Any = None,
     context_writer: Any = None,
     community_summarizer: Any = None,
+    claim_store: Any = None,
+    claim_extractor: Any = None,
+    claim_linker: Any = None,
     snapshot: bool = True,
     snapshot_dir: str | Path | None = None,
 ) -> SyncReport:
@@ -113,6 +120,7 @@ def sync_corpus(
             hierarchy_store=hierarchy_store,
             context_store=context_store,
             lexical=lexical,
+            claim_store=claim_store,
         )
 
     # -- prune removed and (old-identity) changed sources, before any rebuild --
@@ -140,6 +148,8 @@ def sync_corpus(
             hierarchy_store.remove_source(old_source_id)
         if context_store is not None:
             context_store.remove_source(old_source_id)
+        if claim_store is not None:
+            claim_store.remove_source(old_source_id)
 
     # -- ingest new/changed paths under their current (correct) source_id --
     new_or_changed_source_ids: list[str] = []
@@ -183,6 +193,18 @@ def sync_corpus(
                 source_ids=new_or_changed_source_ids,
             )
 
+            # Must run immediately after build_concepts, not just "somewhere
+            # in this scoped block" — build_claims anchors each chapter's
+            # claims to that chapter's just-updated concept menu (see
+            # ragcore.claims.pipeline.build_claims's module docstring).
+            if claim_store is not None and claim_extractor is not None:
+                from ragcore.claims.pipeline import build_claims
+
+                build_claims(
+                    corpus, claim_store, claim_extractor, concept_store,
+                    source_ids=new_or_changed_source_ids,
+                )
+
         if context_store is not None and context_writer is not None:
             from ragcore.contextual.pipeline import build_contextual_embeddings
 
@@ -203,6 +225,11 @@ def sync_corpus(
 
         detect_communities(concept_store)
         build_community_summaries(corpus, concept_store, community_summarizer)
+
+    if claim_store is not None and claim_linker is not None:
+        from ragcore.claims.linking import link_claims
+
+        link_claims(claim_store, claim_linker)
 
     return SyncReport(
         added=plan.added,
