@@ -27,6 +27,7 @@ from ragcore.types import (
     Filter,
     IngestProgress,
     IngestReport,
+    IngestStage,
     Retrieved,
     SourceInfo,
 )
@@ -174,10 +175,10 @@ class Corpus:
         vector_groups = self.embedder.embed_groups(text_groups, input_type="document")
 
         out: list[ChunkGroup] = []
-        for group, vectors in zip(groups, vector_groups):
+        for group, vectors in zip(groups, vector_groups, strict=True):
             embedded_chunks = [
                 dataclasses.replace(chunk, vector=vector)
-                for chunk, vector in zip(group.chunks, vectors)
+                for chunk, vector in zip(group.chunks, vectors, strict=True)
             ]
             out.append(ChunkGroup(group_id=group.group_id, chunks=embedded_chunks))
         return out
@@ -186,12 +187,12 @@ class Corpus:
     def _report(
         on_progress: Callable[[IngestProgress], None] | None,
         path: Path,
-        stage: str,
+        stage: IngestStage,
         done: int,
         total: int,
     ) -> None:
         if on_progress is not None:
-            on_progress(IngestProgress(path=str(path), stage=stage, chunks_done=done, chunks_total=total))  # type: ignore[arg-type]
+            on_progress(IngestProgress(path=str(path), stage=stage, chunks_done=done, chunks_total=total))
 
     # -- retrieval -------------------------------------------------------
 

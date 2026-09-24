@@ -1,0 +1,31 @@
+{
+  "_comment": "Committed eval baseline for tests/integration/test_eval_quality.py's regression gate. Captured against the full 8-book synthetic library (DeterministicEmbedder, dim=256, k=10) on the run that established this integration suite. Regenerate deliberately (re-run test_eval_quality.py and copy tests/integration/artifacts/eval_report.json here) if a legitimate ragcore change shifts these numbers — never bump it just to silence a failing gate without understanding why it moved.",
+  "book_count": 8,
+  "n_needles": 8,
+  "vector_only": {
+    "label": "vector-only",
+    "n_queries": 8,
+    "k": 10,
+    "recall_at_k": 1.0,
+    "precision_at_k": 0.1,
+    "ndcg_at_k": 0.9077324383928644,
+    "mrr": 0.875,
+    "latency_p50_ms": 2.308874998561805,
+    "latency_p95_ms": 2.6886669984378386,
+    "latency_p99_ms": 2.6886669984378386,
+    "latency_max_ms": 2.6886669984378386
+  },
+  "graph_hybrid": {
+    "label": "graph-hybrid",
+    "n_queries": 8,
+    "k": 10,
+    "recall_at_k": 1.0,
+    "precision_at_k": 0.1,
+    "ndcg_at_k": 0.9077324383928644,
+    "mrr": 0.875,
+    "latency_p50_ms": 2.238667002529837,
+    "latency_p95_ms": 4.21700000151759,
+    "latency_p99_ms": 4.21700000151759,
+    "latency_max_ms": 4.21700000151759
+  }
+}

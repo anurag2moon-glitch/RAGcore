@@ -14,6 +14,22 @@ from typing import Any, Literal
 from ragcore.graph.types import GraphContext
 
 SourceType = Literal["pdf", "epub", "docx", "txt", "md"]
+"""What a Loader can produce. Closed — every Loader implementation emits one
+of these five, and Document.source_type / SourceInfo.source_type stay
+scoped to exactly this vocabulary."""
+
+ChunkOrigin = SourceType | Literal["synthetic"]
+"""What a Chunk's ChunkMeta.source_type may carry — a superset of
+SourceType. "synthetic" marks a chunk ragcore generated itself rather than
+extracted from a file (e.g. a community summary surfaced as retrievable
+context by ragcore.retrieval.concept.ConceptRetriever — see
+ragcore.concepts.communities). No Loader ever produces "synthetic"; keeping
+it off SourceType itself means that invariant is enforced by the type
+checker, not just a docstring, and a VectorStore can reject it on upsert
+(see LanceDBStore.upsert) since a synthetic chunk is never meant to be
+persisted as if it were real source material."""
+
+IngestStage = Literal["loading", "chunking", "embedding", "storing", "done"]
 
 # A single embedding vector. Kept as a plain list[float] rather than a numpy
 # array at this boundary so the protocols don't force a numpy dependency on
@@ -76,7 +92,7 @@ class ChunkMeta:
     source_id: str
     source_path: str
     source_title: str | None
-    source_type: SourceType
+    source_type: ChunkOrigin
 
     # --- book structure ---
     section_path: tuple[str, ...]
@@ -185,7 +201,7 @@ class IngestProgress:
     """Progress callback payload for Corpus.ingest()/ingest_many()."""
 
     path: str
-    stage: Literal["loading", "chunking", "embedding", "storing", "done"]
+    stage: IngestStage
     chunks_done: int
     chunks_total: int
 

@@ -10,3 +10,6 @@ dist/
 *.lance/
 samples/
 *.ragcore-db/
+tests/integration/.cache/
+tests/integration/.gutenberg_cache/
+tests/integration/artifacts/

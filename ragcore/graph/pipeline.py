@@ -105,6 +105,17 @@ def build_graph(
 
             id_remap: dict[str, str] = {}
             resolved_entities: list[Entity] = []
+            # store.entities_by_type(type) is fetched at most once per
+            # (chapter, entity_type) rather than once per candidate: nothing
+            # is written back to `store` until after this whole chapter's
+            # candidates are resolved (store.add_entities/add_relations
+            # below), so the result is identical for every candidate of the
+            # same type within this chapter — caching it changes nothing
+            # about which entities a candidate is compared against, only how
+            # many times the same query (and, via the resolver, the same
+            # embeddings) get repeated. See CLAUDE.md-adjacent perf note:
+            # this was previously O(candidates) queries per chapter.
+            existing_by_type: dict[str, list[Entity]] = {}
             for candidate in candidate_entities:
                 hints = relation_hints.get(candidate.entity_id)
                 if hints:
@@ -112,7 +123,10 @@ def build_graph(
                         candidate, extra={**candidate.extra, "relations": hints}
                     )
 
-                existing_same_type = store.entities_by_type(candidate.entity_type)
+                entity_type = candidate.entity_type
+                if entity_type not in existing_by_type:
+                    existing_by_type[entity_type] = store.entities_by_type(entity_type)
+                existing_same_type = existing_by_type[entity_type]
                 existing_ids = {e.entity_id for e in existing_same_type}
 
                 if candidate.entity_id in existing_ids:

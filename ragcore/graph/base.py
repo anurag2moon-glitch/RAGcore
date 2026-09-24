@@ -53,6 +53,17 @@ class GraphStore(Protocol):
         merge candidates — see ragcore.graph.resolver."""
         ...
 
+    def remove_chunk_ids(self, chunk_ids: Sequence[str]) -> None:
+        """Prunes the given chunk_ids from every entity's/relation's
+        provenance, deleting any entity or relation left with zero
+        remaining chunk associations. See ragcore.versioning.sync."""
+        ...
+
+    def remove_source(self, source_id: str) -> None:
+        """All chunk associations belonging to `source_id`, pruned via
+        remove_chunk_ids. See ragcore.versioning.sync."""
+        ...
+
 
 @runtime_checkable
 class EntityExtractor(Protocol):

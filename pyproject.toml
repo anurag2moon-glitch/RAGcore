@@ -38,5 +38,7 @@ packages = ["ragcore"]
 [tool.pytest.ini_options]
 markers = [
     "live: hits real external services (network, API keys required); excluded by default",
+    "integration: production-scale integration suite (tests/integration) - no network, real components, deterministic mock embedder/extractor",
+    "gutenberg: real Project Gutenberg books read from a local opt-in cache (see scripts/fetch_gutenberg.py); excluded by default, skips cleanly when the cache is absent",
 ]
-addopts = "-m 'not live'"
+addopts = "-m 'not live and not gutenberg'"

@@ -46,6 +46,8 @@ def test_graph_protocols_are_structurally_satisfiable() -> None:
         def entities_for_chunks(self, chunk_ids): return {}
         def chunks_for_entities(self, entity_ids): return {}
         def entities_by_type(self, entity_type): return []
+        def remove_chunk_ids(self, chunk_ids): ...
+        def remove_source(self, source_id): ...
 
     class StubExtractor:
         def extract(self, chunks): return [], []
