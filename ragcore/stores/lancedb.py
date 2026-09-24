@@ -192,6 +192,13 @@ class LanceDBStore:
     def upsert(self, chunks: Sequence[Chunk]) -> None:
         if not chunks:
             return
+        for c in chunks:
+            if c.meta.source_type == "synthetic":
+                raise StoreError(
+                    f"chunk {c.chunk_id!r} has source_type='synthetic' — synthetic "
+                    "chunks (e.g. community summaries) are generated at retrieval "
+                    "time and must never be upserted into a VectorStore"
+                )
         rows = [_chunk_to_row(c) for c in chunks]
         ids = [r["chunk_id"] for r in rows]
         id_list = ", ".join(_sql_literal(i) for i in ids)
@@ -276,3 +283,39 @@ class LanceDBStore:
 
     def count(self) -> int:
         return self._table.count_rows()
+
+    # -- versioning (item 7: incremental ingestion) ---------------------
+
+    def snapshot(self, tag: str) -> int:
+        """Tags the table's current version for later rollback via
+        restore_snapshot(tag) — uses LanceDB's own native version/tag
+        support (confirmed present in the installed lancedb, previously
+        unused by this store). A tagged version is exempt from
+        `cleanup_old_versions()`/`optimize()`, so a consumer running those
+        independently can't silently delete a snapshot out from under this
+        store. Returns the tagged version number."""
+        version = self._table.version
+        self._table.tags.create(tag, version)
+        return version
+
+    def restore_snapshot(self, tag: str) -> int:
+        """Rolls back to the version tagged `tag`. LanceDB's version history
+        is append-only — `restore()` creates a NEW version equivalent to the
+        tagged one rather than destroying anything since, so a rollback is
+        itself re-runnable and never loses forward history. Returns the new
+        current version number."""
+        version = self._table.tags.get_version(tag)
+        self._table.restore(version)
+        return self._table.version
+
+    def list_snapshots(self) -> list[tuple[str, int]]:
+        """Every (tag, version) pair currently recorded, for a caller
+        implementing retention (see ragcore.versioning.snapshot)."""
+        return [(tag, info["version"]) for tag, info in self._table.tags.list().items()]
+
+    def drop_snapshot(self, tag: str) -> None:
+        """Removes a tag. The tagged version itself is not deleted by this
+        call — dropping the tag only re-exposes that version to normal
+        cleanup (`cleanup_old_versions()`/`optimize()`), which is the
+        intended garbage-collection path."""
+        self._table.tags.delete(tag)
