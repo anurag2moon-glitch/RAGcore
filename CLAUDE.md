@@ -290,13 +290,10 @@ on top of, not consumed directly by anything in this codebase yet.
 
 Adds session memory on top of the (still single-turn) retrieval/generation
 pipeline, without changing `Corpus`, any `Retriever`, `Generator`,
-`Verifier`, or any store. Two entrypoints, both built the same way — append/
-read `Turn`s from a `TranscriptStore`, rewrite via a `QueryRewriter`, then
-call the **unmodified** `Corpus.ask(query, ...)`:
-
-- **`PersonaChatSession`** — a user talking with one persona.
-- **`DebateSession`** — two or more personas addressing one shared
-  transcript, each speaking only through their own `Corpus`.
+`Verifier`, or any store. One entrypoint, `PersonaChatSession` (a user
+talking with one persona), built by appending/reading `Turn`s from a
+`TranscriptStore`, rewriting via a `QueryRewriter`, then calling the
+**unmodified** `Corpus.ask(query, ...)`.
 
 **The transcript is never written into any corpus, concept graph, or claim
 store.** `TranscriptStore` (in-memory by default — `InMemoryTranscriptStore`,
@@ -314,35 +311,16 @@ something to leave implicit.
 folded into it: `HistoryAwareQueryRewriter` (Claude-backed default) turns
 the transcript into one self-contained query string, handed unmodified to
 `Corpus.ask()`. No LLM call at all when the transcript has ≤1 turn (the very
-first message of a session, or a debate's seeded topic turn) — nothing
-prior exists to resolve pronouns/ellipsis against, so this is a free base
-case, the same cost discipline `EmbeddingConceptMapper`/`ClaudeConceptMapper`
-already follow.
+first message of a session) — nothing prior exists to resolve
+pronouns/ellipsis against, so this is a free base case, the same cost
+discipline `EmbeddingConceptMapper`/`ClaudeConceptMapper` already follow.
 
-**Persona isolation, precisely**: "one `Corpus`/`ClaimStore` per persona,
-no cross-contamination" was already documented as the product's assumption
-(see the claims-layer section above) but was never *enforced* anywhere in
-code — nothing stops two personas' objects from sharing a store, and
-`link_claims`/`detect_communities` would silently mix them if they did.
-Debate mode is the first place two personas' `Corpus` objects are ever
-alive in the same process at once, so `DebateSession.__init__` adds one
-concrete guard: it refuses construction if two persona_ids resolve to the
-*same* `Corpus` instance (an `id()` identity check). Beyond that one guard,
-isolation is structural, not a runtime check: `take_turn(persona_id)` looks
-up exactly one `Corpus` from the `persona_id -> Corpus` mapping it was
-constructed with — there is no code path anywhere in
-`ragcore/conversation/` through which one persona's turn generation could
-be handed another persona's `Corpus`/retriever/generator/store. The
-opponent's previous turn reaches the *rewriter* as plain transcript text
-(conversational context, used only to produce a better query string) and
-never reaches the *other* persona's retrieval pipeline as source material.
-
-**`send()`/`take_turn()` return the full `Answer`** (text + citations +
-verification, if the persona's own `Corpus` has a `VerifyingGenerator`
-wired), never a bare string — discarding data the existing pipeline already
-computed would serve no purpose. Only the **transcript** stores `answer.text`
-alone: plain, no citations, matching the requirement that this eventually
-feeds a text-to-speech layer.
+**`send()` returns the full `Answer`** (text + citations + verification, if
+the persona's own `Corpus` has a `VerifyingGenerator` wired), never a bare
+string — discarding data the existing pipeline already computed would serve
+no purpose. Only the **transcript** stores `answer.text` alone: plain, no
+citations, matching the requirement that this eventually feeds a
+text-to-speech layer.
 
 **TTS-safe, in-character output is a system-prompt concern, not a new
 mechanism.** `ClaudeGenerator` already accepts `system_prompt=...` at
@@ -355,14 +333,33 @@ Nothing in `ragcore/conversation/` reaches into an existing `corpus.generator`
 to change its prompt; each persona's voice is configured once, on that
 persona's own `Corpus`, before it's handed to a session.
 
-`DebateSession.take_turn()` is a primitive, not a driver — who speaks next,
-how many rounds, and when a debate ends is the caller's loop
-(`scripts/debate_demo.py` shows the pattern); building a turn-taking policy
-into this layer would be scope beyond what a session/rewriting layer needs
-to do.
+**Multi-party sessions (e.g. two personas debating each other) are
+deliberately NOT in this package.** `ragcore` is a shared, domain-agnostic
+base layer consumed by more than one product — this codebase's own test
+for "does this belong in the shared base?" is "would it make sense applied
+to an unrelated corpus in a different domain too?" A `TranscriptStore`,
+`QueryRewriter`, and `PersonaChatSession` all pass that test — nothing
+about them assumes a persona, a philosopher, or a debate. "Two entities
+debating," turn-taking policy, and any generic "multi-party session"
+wrapper do not clearly pass it and were deliberately left for whichever
+product needs them to build on top of these primitives (`TranscriptStore` +
+`QueryRewriter` + one `PersonaChatSession` per party is sufficient to build
+one), rather than living inside `ragcore` itself. (An earlier version of
+this codebase did ship a `DebateSession` directly in this package; it was
+removed for exactly this reason — see git history if you need the
+reference implementation to rebuild on top of these primitives elsewhere.)
 
-New, purely additive: `SessionError(RagcoreError)` in `ragcore/errors.py`,
-for the duplicate-`Corpus`-instance and unknown-`persona_id` guards above.
+**Persona isolation, precisely**: "one `Corpus`/`ClaimStore` per persona,
+no cross-contamination" is documented as the product's assumption (see the
+claims-layer section above) but is not *enforced* anywhere in `ragcore`
+itself — nothing stops two personas' objects from sharing a store, and
+`link_claims`/`detect_communities` would silently mix them if they did.
+`ragcore/conversation/` doesn't change this: `PersonaChatSession` only ever
+touches the one `Corpus` it was constructed with, but a consumer building a
+multi-party session on top of these primitives is responsible for its own
+guard against two parties accidentally sharing a `Corpus` instance —
+that guard is a product-layer concern, not something this package can
+enforce on a mechanism it doesn't itself implement.
 
 ## Hybrid retrieval, contextual embeddings, eval harness, multi-hop, cross-encoder, hierarchy, incremental ingestion
 
@@ -509,7 +506,6 @@ python scripts/query.py samples/library.lancedb "your question" [k] [--ask]
 python scripts/concepts_demo.py    # concept-layer wiring demo, no API calls
 python scripts/run_eval.py --demo  # eval harness demo, no API calls
 python scripts/conversation_demo.py  # chat-mode session + rewriting demo, no API calls
-python scripts/debate_demo.py        # persona-vs-persona debate demo, no API calls
 ```
 
 `VOYAGE_API_KEY` is required for anything that embeds (ingestion, or any
