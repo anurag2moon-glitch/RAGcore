@@ -1,3 +1,23 @@
+# Working philosophy
+
+When there's a choice between "fastest to do right now" and "correct for
+long-term maintainability/review/editability," always recommend the latter
+as the default option, not the former. Optimize for what will make the
+codebase easiest to review, debug, revert, and extend later — not for
+finishing the current step in fewer commands.
+
+Specifically:
+- Prefer logical, atomic commits over one large commit, even if it takes
+  more steps.
+- Prefer clear structure and separation of concerns over quick inline
+  solutions.
+- When giving me a "Recommended" option, recommend based on long-term
+  correctness, not short-term convenience — and say so explicitly if the
+  two conflict.
+- If a fast/convenient option exists but a more correct option would serve
+  me better long-term, present the correct one as the recommendation, and
+  explain the tradeoff, don't just silently pick fast.
+
 # ragcore
 
 Reusable retrieval layer for RAG: structure-aware ingestion for long-form
