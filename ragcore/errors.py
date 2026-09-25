@@ -34,3 +34,9 @@ class StoreError(RagcoreError):
 class GenerationError(RagcoreError):
     """Raised when a Generator backend fails (API error, refusal, rate
     limit exhausted after retries)."""
+
+
+class SessionError(RagcoreError):
+    """Raised by ragcore.conversation for a misconfigured or misused
+    session — e.g. two personas in one DebateSession sharing the same
+    Corpus instance, or a take_turn() call naming an unknown persona_id."""

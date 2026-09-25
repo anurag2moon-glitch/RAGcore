@@ -24,7 +24,9 @@ Every layer attaches in front of retrieval/generation without changing
 `ragcore/contextual`, `ragcore/hierarchy`, `ragcore/reranking`,
 `ragcore/eval`, `ragcore/versioning`, `ragcore/verification`,
 `ragcore/claims` (claim extraction and cross-source linking — storage only,
-no retriever of its own), and
+no retriever of its own), `ragcore/conversation` (session transcripts and
+context-aware query rewriting on top of an existing Corpus, for chat and
+persona-vs-persona debate), and
 `ragcore/retrieval/{graph,concept,hybrid,iterative,cross_encoder,hierarchy,mmr,stack}.py`
 (`ragcore.retrieval.stack.default_stack()` wires the full default retriever
 stack in one call). Run `python scripts/graph_demo.py`,

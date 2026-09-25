@@ -286,6 +286,84 @@ preserve or invent hedging in a generated answer. **Nothing in
 has no retriever of its own (like `ragcore/eval`) — it is meant to be built
 on top of, not consumed directly by anything in this codebase yet.
 
+## Conversation layer (`ragcore/conversation/`)
+
+Adds session memory on top of the (still single-turn) retrieval/generation
+pipeline, without changing `Corpus`, any `Retriever`, `Generator`,
+`Verifier`, or any store. Two entrypoints, both built the same way — append/
+read `Turn`s from a `TranscriptStore`, rewrite via a `QueryRewriter`, then
+call the **unmodified** `Corpus.ask(query, ...)`:
+
+- **`PersonaChatSession`** — a user talking with one persona.
+- **`DebateSession`** — two or more personas addressing one shared
+  transcript, each speaking only through their own `Corpus`.
+
+**The transcript is never written into any corpus, concept graph, or claim
+store.** `TranscriptStore` (in-memory by default — `InMemoryTranscriptStore`,
+a `dict[str, list[Turn]]` behind a lock) is deliberately a swappable
+`Protocol`, matching every other capability in this codebase, even though a
+plain list would satisfy "session-scoped and ephemeral" just as literally —
+a future horizontally-scaled deployment needs a shared backend (Redis, a DB
+row per session) keyed the same way, and that has to be a drop-in
+implementation, not a rewrite of `session.py`. `close()`/`clear_session()`
+frees a session's turns explicitly — a transcript that outlives its session
+is a memory leak in a long-lived server handling many sessions, not
+something to leave implicit.
+
+**Query rewriting is a distinct step strictly *before* retrieval**, not
+folded into it: `HistoryAwareQueryRewriter` (Claude-backed default) turns
+the transcript into one self-contained query string, handed unmodified to
+`Corpus.ask()`. No LLM call at all when the transcript has ≤1 turn (the very
+first message of a session, or a debate's seeded topic turn) — nothing
+prior exists to resolve pronouns/ellipsis against, so this is a free base
+case, the same cost discipline `EmbeddingConceptMapper`/`ClaudeConceptMapper`
+already follow.
+
+**Persona isolation, precisely**: "one `Corpus`/`ClaimStore` per persona,
+no cross-contamination" was already documented as the product's assumption
+(see the claims-layer section above) but was never *enforced* anywhere in
+code — nothing stops two personas' objects from sharing a store, and
+`link_claims`/`detect_communities` would silently mix them if they did.
+Debate mode is the first place two personas' `Corpus` objects are ever
+alive in the same process at once, so `DebateSession.__init__` adds one
+concrete guard: it refuses construction if two persona_ids resolve to the
+*same* `Corpus` instance (an `id()` identity check). Beyond that one guard,
+isolation is structural, not a runtime check: `take_turn(persona_id)` looks
+up exactly one `Corpus` from the `persona_id -> Corpus` mapping it was
+constructed with — there is no code path anywhere in
+`ragcore/conversation/` through which one persona's turn generation could
+be handed another persona's `Corpus`/retriever/generator/store. The
+opponent's previous turn reaches the *rewriter* as plain transcript text
+(conversational context, used only to produce a better query string) and
+never reaches the *other* persona's retrieval pipeline as source material.
+
+**`send()`/`take_turn()` return the full `Answer`** (text + citations +
+verification, if the persona's own `Corpus` has a `VerifyingGenerator`
+wired), never a bare string — discarding data the existing pipeline already
+computed would serve no purpose. Only the **transcript** stores `answer.text`
+alone: plain, no citations, matching the requirement that this eventually
+feeds a text-to-speech layer.
+
+**TTS-safe, in-character output is a system-prompt concern, not a new
+mechanism.** `ClaudeGenerator` already accepts `system_prompt=...` at
+construction (unchanged); `ragcore.conversation.prompts.persona_system_prompt()`
+is pure authoring sugar for building one that stays in character, forbids
+markdown, and forbids citation/source-tag markers — overriding
+`DEFAULT_SYSTEM_PROMPT`'s own invitation to reference `[n]`-style excerpt
+numbers, which is right for a reader-facing answer and wrong for speech.
+Nothing in `ragcore/conversation/` reaches into an existing `corpus.generator`
+to change its prompt; each persona's voice is configured once, on that
+persona's own `Corpus`, before it's handed to a session.
+
+`DebateSession.take_turn()` is a primitive, not a driver — who speaks next,
+how many rounds, and when a debate ends is the caller's loop
+(`scripts/debate_demo.py` shows the pattern); building a turn-taking policy
+into this layer would be scope beyond what a session/rewriting layer needs
+to do.
+
+New, purely additive: `SessionError(RagcoreError)` in `ragcore/errors.py`,
+for the duplicate-`Corpus`-instance and unknown-`persona_id` guards above.
+
 ## Hybrid retrieval, contextual embeddings, eval harness, multi-hop, cross-encoder, hierarchy, incremental ingestion
 
 Seven more layers, added in one pass, following the same conventions as the
@@ -430,6 +508,8 @@ pytest -q -m live            # + live tests against real Voyage/Claude APIs
 python scripts/query.py samples/library.lancedb "your question" [k] [--ask]
 python scripts/concepts_demo.py    # concept-layer wiring demo, no API calls
 python scripts/run_eval.py --demo  # eval harness demo, no API calls
+python scripts/conversation_demo.py  # chat-mode session + rewriting demo, no API calls
+python scripts/debate_demo.py        # persona-vs-persona debate demo, no API calls
 ```
 
 `VOYAGE_API_KEY` is required for anything that embeds (ingestion, or any
@@ -437,7 +517,8 @@ python scripts/run_eval.py --demo  # eval harness demo, no API calls
 is required for `--ask` / `Corpus.ask()`, and additionally gates concept
 extraction, community summarization, `ClaudeConceptMapper`,
 `ClaudeVerifier`, contextual-embedding blurb writing,
-`ClaudeSufficiencyJudge`, and `ClaudeHierarchySummarizer`. Cross-encoder
-reranking (`VoyageReranker`) reuses `VOYAGE_API_KEY`, not a separate key.
+`ClaudeSufficiencyJudge`, `ClaudeHierarchySummarizer`, and
+`HistoryAwareQueryRewriter`. Cross-encoder reranking (`VoyageReranker`)
+reuses `VOYAGE_API_KEY`, not a separate key.
 
 `samples/` (gitignored) holds test corpora — not part of the package.
