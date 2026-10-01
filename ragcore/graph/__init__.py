@@ -16,6 +16,7 @@ rationale.
 
 from ragcore.graph.base import EntityExtractor, GraphStore
 from ragcore.graph.claude_extractor import ClaudeEntityExtractor
+from ragcore.graph.kuzu_store import KuzuGraphStore
 from ragcore.graph.pipeline import GraphReport, build_graph
 from ragcore.graph.resolver import EmbeddingEntityResolver, EntityResolver
 from ragcore.graph.sqlite_store import SqliteGraphStore
@@ -30,6 +31,7 @@ __all__ = [
     "EntityResolver",
     "EmbeddingEntityResolver",
     "SqliteGraphStore",
+    "KuzuGraphStore",
     "ClaudeEntityExtractor",
     "build_graph",
     "GraphReport",

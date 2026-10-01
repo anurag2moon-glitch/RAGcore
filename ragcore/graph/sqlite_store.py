@@ -19,24 +19,8 @@ from pathlib import Path
 from typing import Sequence
 
 from ragcore.errors import wrap_backend_errors
+from ragcore.graph.merge import merge_extra
 from ragcore.graph.types import Entity, Relation
-
-# extra fields that accumulate (set-union) across merges rather than being
-# overwritten by the latest write — aliases and relation hints both grow
-# monotonically as more chapters mention the same entity. See
-# ragcore.graph.resolver._entity_text for why "relations" exists at all.
-_LIST_MERGE_KEYS = ("aliases", "relations")
-
-
-def _merge_extra(old: dict, new: dict) -> dict:
-    merged = dict(old)
-    merged.update(new)
-    for key in _LIST_MERGE_KEYS:
-        combined = set(old.get(key) or []) | set(new.get(key) or [])
-        if combined:
-            merged[key] = sorted(combined)
-    return merged
-
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entities (
@@ -118,7 +102,7 @@ class SqliteGraphStore:
                         )
                     else:
                         _name, extra_json = row
-                        merged = _merge_extra(json.loads(extra_json), e.extra)
+                        merged = merge_extra(json.loads(extra_json), e.extra)
                         self._conn.execute(
                             "UPDATE entities SET name = ?, extra_json = ? WHERE entity_id = ?",
                             (e.name, json.dumps(merged), e.entity_id),
@@ -159,7 +143,7 @@ class SqliteGraphStore:
                         )
                     else:
                         (extra_json,) = row
-                        merged = _merge_extra(json.loads(extra_json), r.extra)
+                        merged = merge_extra(json.loads(extra_json), r.extra)
                         self._conn.execute(
                             "UPDATE relations SET extra_json = ? WHERE relation_id = ?",
                             (json.dumps(merged), r.relation_id),
