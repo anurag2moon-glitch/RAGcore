@@ -9,11 +9,15 @@ to answer only from that context, and returns an Answer. Uses the official
 from __future__ import annotations
 
 import time
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Sequence
 
 from ragcore.errors import GenerationError
 from ragcore.generation.base import Answer
+from ragcore.generation.context_packer import pack_context
 from ragcore.types import Retrieved
+
+if TYPE_CHECKING:
+    from ragcore.corpus import Corpus
 
 try:
     import anthropic
@@ -47,7 +51,17 @@ def _format_context(context: Sequence[Retrieved]) -> str:
 
 
 class ClaudeGenerator:
-    """Generator implementation using Claude (claude-opus-5 by default)."""
+    """Generator implementation using Claude (claude-opus-5 by default).
+
+    `context_max_tokens` is optional (default None) and opt-in: see
+    ragcore.generation.context_packer. Leaving it unset keeps `generate()`'s
+    original behavior exactly — every retrieved chunk goes into the
+    prompt and `Answer.citations` unchanged, no token accounting at all.
+    Setting it packs `context` through `pack_context()` first (dedupe,
+    optional neighbor expansion via `corpus`/`expand_neighbors`, token
+    budgeting, document-order presentation) and citations become only
+    what actually made the prompt.
+    """
 
     def __init__(
         self,
@@ -58,6 +72,10 @@ class ClaudeGenerator:
         system_prompt: str | None = None,
         max_tokens: int = 4096,
         max_retries: int = 5,
+        context_max_tokens: int | None = None,
+        context_reserve_tokens: int = 0,
+        corpus: Corpus | None = None,
+        expand_neighbors: int = 0,
     ) -> None:
         if client is None and anthropic is None:
             raise GenerationError(
@@ -69,11 +87,25 @@ class ClaudeGenerator:
         self._system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
         self._max_tokens = max_tokens
         self._max_retries = max_retries
+        self._context_max_tokens = context_max_tokens
+        self._context_reserve_tokens = context_reserve_tokens
+        self._corpus = corpus
+        self._expand_neighbors = expand_neighbors
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
 
     def generate(self, query: str, context: Sequence[Retrieved]) -> Answer:
+        if self._context_max_tokens is not None:
+            packed = pack_context(
+                context,
+                max_tokens=self._context_max_tokens,
+                reserve_tokens=self._context_reserve_tokens,
+                corpus=self._corpus,
+                expand_neighbors=self._expand_neighbors,
+            )
+            context = packed.kept
+
         user_content = f"{_format_context(context)}\n\nQuestion: {query}"
         response = self._call_with_retry(user_content)
 
