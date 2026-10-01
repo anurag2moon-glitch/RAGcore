@@ -2,8 +2,20 @@
 graph.
 
 detect_communities() clusters ragcore.concepts.types.ConceptEdge rows with
-Louvain (networkx.algorithms.community.louvain_communities — the `concepts`
-extra, lazily imported like every other optional backend in this codebase).
+Louvain by default, or Leiden (`algorithm="leiden"`, docs/ARCHITECTURE.md
+Phase 4 gap list item 19) — both via `networkx.algorithms.community` (the
+`concepts` extra, lazily imported like every other optional backend in
+this codebase; `leiden_communities` needs a recent-enough networkx —
+confirmed present in 3.7, the version this pass was developed against).
+Louvain stays the default: it's the one already proven in this codebase's
+own tests, and Leiden's real advantage over it — guaranteeing every
+resulting community is well-connected, which matters most for large,
+multi-level hierarchical clustering — isn't yet exercised by anything in
+this codebase (`detect_communities()` produces one flat level of
+communities either way). `algorithm="leiden"` is available now for a
+corpus where that guarantee is worth it; switch the default later if a
+real corpus shows Louvain producing disconnected or low-quality
+communities Leiden doesn't.
 build_community_summaries() then synthesizes, via an LLM, what each
 resulting cluster of related concepts collectively says — precomputed and
 stored so ragcore.retrieval.concept.ConceptRetriever can surface a summary
@@ -25,7 +37,7 @@ import hashlib
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from pydantic import BaseModel
 
@@ -55,6 +67,7 @@ else:
     _ANTHROPIC_IMPORT_ERROR = None
 
 LOUVAIN_VERSION = "networkx-louvain-v1"
+LEIDEN_VERSION = "networkx-leiden-v1"
 PROMPT_VERSION = "community-summary-v1"
 
 
@@ -75,11 +88,17 @@ class CommunityReport:
     concept_count: int
 
 
-def _run_fingerprint(concepts: Sequence[Concept], edges: Sequence, resolution: float, seed: int) -> str:
+def _run_fingerprint(
+    concepts: Sequence[Concept],
+    edges: Sequence,
+    resolution: float,
+    seed: int,
+    algorithm_version: str,
+) -> str:
     concept_ids = sorted(c.concept_id for c in concepts)
     edge_triples = sorted(f"{e.source_concept_id}|{e.target_concept_id}|{e.weight}" for e in edges)
     payload = "\n".join([
-        LOUVAIN_VERSION, f"resolution={resolution}", f"seed={seed}",
+        algorithm_version, f"resolution={resolution}", f"seed={seed}",
         *concept_ids, *edge_triples,
     ])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -91,22 +110,36 @@ def _community_id(member_concept_ids: Sequence[str]) -> str:
 
 
 def detect_communities(
-    store: ConceptStore, *, resolution: float = 1.0, seed: int = 0, force: bool = False
+    store: ConceptStore,
+    *,
+    algorithm: Literal["louvain", "leiden"] = "louvain",
+    resolution: float = 1.0,
+    seed: int = 0,
+    force: bool = False,
 ) -> CommunityReport:
-    """Clusters the concept graph with Louvain and persists concept_id ->
+    """Clusters the concept graph (Louvain by default, or Leiden —
+    `algorithm="leiden"`, see module docstring) and persists concept_id ->
     community_id assignments. A no-op (ran=False) when the concept graph is
-    identical to the last successful run — checked via a fingerprint over
-    every concept id and every (source, target, weight) edge triple, so
-    adding or resolving even one concept invalidates it and the next call
+    identical to the last successful run under the same algorithm —
+    checked via a fingerprint over the algorithm, every concept id, and
+    every (source, target, weight) edge triple, so adding/resolving a
+    concept, or switching algorithms, both invalidate it and the next call
     reclusters."""
     if networkx is None:
         raise GenerationError(
             "community detection requires the 'concepts' extra: install ragcore[concepts]"
         ) from _IMPORT_ERROR
+    if algorithm == "leiden" and not hasattr(networkx.algorithms.community, "leiden_communities"):
+        raise GenerationError(
+            "algorithm='leiden' requires a networkx version with "
+            "networkx.algorithms.community.leiden_communities (present in 3.7+); "
+            "upgrade the 'concepts' extra's networkx or use algorithm='louvain'"
+        )
 
+    algorithm_version = LEIDEN_VERSION if algorithm == "leiden" else LOUVAIN_VERSION
     concepts = store.all_concepts()
     edges = store.all_edges()
-    fingerprint = _run_fingerprint(concepts, edges, resolution, seed)
+    fingerprint = _run_fingerprint(concepts, edges, resolution, seed, algorithm_version)
 
     if not force and store.community_run_fingerprint() == fingerprint:
         return CommunityReport(ran=False, community_count=len(store.all_community_ids()), concept_count=len(concepts))
@@ -116,11 +149,20 @@ def detect_communities(
     for e in edges:
         graph.add_edge(e.source_concept_id, e.target_concept_id, weight=e.weight)
 
-    clusters: list[set[str]] = (
-        networkx.algorithms.community.louvain_communities(graph, weight="weight", resolution=resolution, seed=seed)
-        if graph.number_of_nodes() > 0
-        else []
-    )
+    if graph.number_of_nodes() == 0:
+        clusters: list[set[str]] = []
+    elif algorithm == "leiden":
+        clusters = list(
+            networkx.algorithms.community.leiden_communities(
+                graph, weight="weight", resolution=resolution, seed=seed, metric="modularity"
+            )
+        )
+    else:
+        clusters = list(
+            networkx.algorithms.community.louvain_communities(
+                graph, weight="weight", resolution=resolution, seed=seed
+            )
+        )
 
     assignments: dict[str, str] = {}
     for cluster in clusters:
