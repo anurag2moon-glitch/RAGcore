@@ -33,6 +33,7 @@ suited schema, not unify anything.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import time
 from typing import TYPE_CHECKING, Any, Sequence
@@ -40,6 +41,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from pydantic import BaseModel
 
 from ragcore.errors import GenerationError
+from ragcore.graph.merge import merge_extra
 from ragcore.graph.types import Entity, Relation
 
 if TYPE_CHECKING:
@@ -108,6 +110,37 @@ class _ExtractedRelation(BaseModel):
 class _ExtractionResult(BaseModel):
     entities: list[_ExtractedEntity]
     relations: list[_ExtractedRelation]
+    found_more: bool = True
+    """Only meaningful on a gleaning round's response (see
+    ClaudeEntityExtractor.extract) — the initial pass ignores it. Defaults
+    to True so a non-gleaning call (which never reads this field) and an
+    old recorded response both parse fine."""
+
+
+GLEANING_PROMPT = (
+    "Re-read the chapter text above carefully. List ONLY additional "
+    "entities or relations you missed on your first pass — do not repeat "
+    "anything already listed above. If you're confident you found "
+    "everything, set found_more to false and leave entities/relations "
+    "empty."
+)
+
+
+def _summarize_for_gleaning(entities: Sequence[Entity], relations: Sequence[Relation]) -> str:
+    """A plain-text recap of what's been extracted so far, for the
+    assistant turn of a gleaning round's conversation — not re-parsed, so
+    it only needs to be clear to the model reviewing its own prior work,
+    not machine-readable."""
+    entity_lines = [f"- {e.name} ({e.entity_type})" for e in entities] or ["(none)"]
+    relation_lines = [
+        f"- {r.source_entity_id} {r.relation_type} {r.target_entity_id}" for r in relations
+    ] or ["(none)"]
+    return (
+        "Entities found so far:\n"
+        + "\n".join(entity_lines)
+        + "\n\nRelations found so far:\n"
+        + "\n".join(relation_lines)
+    )
 
 
 def _normalize(name: str) -> str:
@@ -128,7 +161,15 @@ def _format_chunks(chunks: Sequence[Chunk]) -> tuple[str, dict[int, str]]:
 
 
 class ClaudeEntityExtractor:
-    """EntityExtractor implementation using Claude (claude-opus-5 by default)."""
+    """EntityExtractor implementation using Claude (claude-opus-5 by default).
+
+    `gleaning_rounds` (default 0, opt-in) adds up to that many follow-up
+    "did you miss anything?" passes per `extract()` call — the gleaning
+    technique from Microsoft's GraphRAG paper, for recall on a dense
+    chapter a single pass under-extracts. A round stops early the moment
+    the model reports nothing more found; 0 keeps `extract()`'s original
+    single-pass behavior and cost exactly unchanged.
+    """
 
     def __init__(
         self,
@@ -138,6 +179,7 @@ class ClaudeEntityExtractor:
         client: Any | None = None,
         max_tokens: int = 8192,
         max_retries: int = 5,
+        gleaning_rounds: int = 0,
     ) -> None:
         if client is None and anthropic is None:
             raise GenerationError(
@@ -148,6 +190,7 @@ class ClaudeEntityExtractor:
         self.model = model
         self._max_tokens = max_tokens
         self._max_retries = max_retries
+        self._gleaning_rounds = gleaning_rounds
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
@@ -157,47 +200,81 @@ class ClaudeEntityExtractor:
             return [], []
 
         formatted, index_to_chunk_id = _format_chunks(chunks)
-        parsed = self._call_with_retry(formatted)
 
         def _resolve(indices: list[int]) -> tuple[str, ...]:
             # Silently drop any index outside the range we gave the model —
             # a hallucinated citation, not a crash-worthy error.
             return tuple(index_to_chunk_id[i] for i in indices if i in index_to_chunk_id)
 
-        entities: list[Entity] = []
+        entities_by_id: dict[str, Entity] = {}
+        relations_by_id: dict[str, Relation] = {}
         name_to_id: dict[str, str] = {}
-        for e in parsed.entities:
-            entity_id = _entity_id(e.entity_type, e.name)
-            name_to_id[e.name] = entity_id
-            entities.append(
-                Entity(
+
+        def _absorb(parsed: _ExtractionResult) -> None:
+            for e in parsed.entities:
+                entity_id = _entity_id(e.entity_type, e.name)
+                name_to_id[e.name] = entity_id
+                new_entity = Entity(
                     entity_id=entity_id,
                     name=e.name,
                     entity_type=e.entity_type,
                     source_chunk_ids=_resolve(e.chunk_indices),
                     extra={"aliases": e.aliases} if e.aliases else {},
                 )
-            )
+                existing = entities_by_id.get(entity_id)
+                entities_by_id[entity_id] = (
+                    new_entity
+                    if existing is None
+                    else dataclasses.replace(
+                        existing,
+                        source_chunk_ids=tuple(
+                            sorted(set(existing.source_chunk_ids) | set(new_entity.source_chunk_ids))
+                        ),
+                        extra=merge_extra(existing.extra, new_entity.extra),
+                    )
+                )
 
-        relations: list[Relation] = []
-        for r in parsed.relations:
-            source_id = name_to_id.get(r.source_name)
-            target_id = name_to_id.get(r.target_name)
-            if source_id is None or target_id is None:
-                continue  # relation references an entity not extracted this call — drop it
-            relations.append(
-                Relation(
-                    relation_id=f"relation:{r.relation_type}:{source_id}:{target_id}",
+            for r in parsed.relations:
+                source_id = name_to_id.get(r.source_name)
+                target_id = name_to_id.get(r.target_name)
+                if source_id is None or target_id is None:
+                    continue  # relation references an entity not extracted this call — drop it
+                relation_id = f"relation:{r.relation_type}:{source_id}:{target_id}"
+                new_relation = Relation(
+                    relation_id=relation_id,
                     source_entity_id=source_id,
                     target_entity_id=target_id,
                     relation_type=r.relation_type,
                     source_chunk_ids=_resolve(r.chunk_indices),
                 )
-            )
+                existing = relations_by_id.get(relation_id)
+                relations_by_id[relation_id] = (
+                    new_relation
+                    if existing is None
+                    else dataclasses.replace(
+                        existing,
+                        source_chunk_ids=tuple(
+                            sorted(set(existing.source_chunk_ids) | set(new_relation.source_chunk_ids))
+                        ),
+                    )
+                )
 
-        return entities, relations
+        messages: list[dict[str, Any]] = [{"role": "user", "content": formatted}]
+        parsed = self._call_with_retry(messages)
+        _absorb(parsed)
 
-    def _call_with_retry(self, user_content: str) -> _ExtractionResult:
+        for _ in range(self._gleaning_rounds):
+            summary = _summarize_for_gleaning(entities_by_id.values(), relations_by_id.values())
+            messages.append({"role": "assistant", "content": summary})
+            messages.append({"role": "user", "content": GLEANING_PROMPT})
+            gleaned = self._call_with_retry(messages)
+            if not gleaned.found_more:
+                break
+            _absorb(gleaned)
+
+        return list(entities_by_id.values()), list(relations_by_id.values())
+
+    def _call_with_retry(self, messages: list[dict[str, Any]]) -> _ExtractionResult:
         last_err: Exception | None = None
         for attempt in range(self._max_retries):
             try:
@@ -205,7 +282,7 @@ class ClaudeEntityExtractor:
                     model=self.model,
                     max_tokens=self._max_tokens,
                     system=SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": user_content}],
+                    messages=messages,
                     output_format=_ExtractionResult,
                 )
                 return response.parsed_output
