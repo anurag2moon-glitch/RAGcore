@@ -32,6 +32,7 @@ import threading
 from pathlib import Path
 from typing import Protocol, Sequence, runtime_checkable
 
+from ragcore.errors import wrap_backend_errors
 from ragcore.types import Vector
 
 CacheKey = tuple[str, str, int]
@@ -78,6 +79,7 @@ class SqliteEmbeddingCache:
     precision for a cached embedding that's about to feed a cosine/dot
     similarity search, not a numerically sensitive computation)."""
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -85,6 +87,7 @@ class SqliteEmbeddingCache:
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
 
+    @wrap_backend_errors
     def get_many(self, keys: Sequence[CacheKey]) -> dict[CacheKey, Vector]:
         if not keys:
             return {}
@@ -104,6 +107,7 @@ class SqliteEmbeddingCache:
                 out[(content_hash, model_name, dim)] = _unpack(blob)
         return out
 
+    @wrap_backend_errors
     def put_many(self, items: dict[CacheKey, Vector]) -> None:
         if not items:
             return
@@ -126,6 +130,7 @@ class SqliteEmbeddingCache:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) FROM embedding_cache").fetchone()
         return row[0]

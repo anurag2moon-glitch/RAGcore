@@ -14,6 +14,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ragcore.errors import wrap_backend_errors
 from ragcore.hierarchy.types import HierarchyLevel, HierarchyNode
 
 _SCHEMA = """
@@ -77,6 +78,7 @@ class SqliteHierarchyStore:
     """Default HierarchyStore: one SQLite file, one node table, one
     per-node checkpoint table."""
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -84,6 +86,7 @@ class SqliteHierarchyStore:
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
 
+    @wrap_backend_errors
     def add_node(self, node: HierarchyNode, *, fingerprint: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -119,6 +122,7 @@ class SqliteHierarchyStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def checkpoint(self, node_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT fingerprint FROM hierarchy_runs WHERE node_id = ? AND status = 'done'",
@@ -126,6 +130,7 @@ class SqliteHierarchyStore:
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def mark_node_failed(self, *, node_id: str, fingerprint: str, error: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -144,28 +149,33 @@ class SqliteHierarchyStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def node(self, node_id: str) -> HierarchyNode | None:
         row = self._conn.execute(
             f"SELECT {_NODE_COLUMNS} FROM hierarchy_nodes WHERE node_id = ?", (node_id,)
         ).fetchone()
         return _row_to_node(row) if row else None
 
+    @wrap_backend_errors
     def nodes_for_source(self, source_id: str) -> list[HierarchyNode]:
         rows = self._conn.execute(
             f"SELECT {_NODE_COLUMNS} FROM hierarchy_nodes WHERE source_id = ?", (source_id,)
         ).fetchall()
         return [_row_to_node(r) for r in rows]
 
+    @wrap_backend_errors
     def nodes_by_level(self, level: HierarchyLevel) -> list[HierarchyNode]:
         rows = self._conn.execute(
             f"SELECT {_NODE_COLUMNS} FROM hierarchy_nodes WHERE level = ?", (level,)
         ).fetchall()
         return [_row_to_node(r) for r in rows]
 
+    @wrap_backend_errors
     def all_nodes(self) -> list[HierarchyNode]:
         rows = self._conn.execute(f"SELECT {_NODE_COLUMNS} FROM hierarchy_nodes").fetchall()
         return [_row_to_node(r) for r in rows]
 
+    @wrap_backend_errors
     def remove_source(self, source_id: str) -> None:
         """Deletes every node and checkpoint row belonging to `source_id` —
         used by ragcore.versioning.sync.sync_corpus when a source is removed
@@ -191,6 +201,7 @@ class SqliteHierarchyStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         """Online backup via the stdlib sqlite3 backup API — safe under
         concurrent readers in WAL mode, unlike a plain file copy. Used by
@@ -201,6 +212,7 @@ class SqliteHierarchyStore:
         finally:
             target.close()
 
+    @wrap_backend_errors
     def restore_from_backup(self, path: str | Path) -> None:
         """The reverse of backup_to: restores this store's live connection
         in place from a previously-taken backup file — see

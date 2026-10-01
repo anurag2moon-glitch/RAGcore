@@ -24,6 +24,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ragcore.errors import wrap_backend_errors
 from ragcore.versioning.types import Snapshot, SourceState
 
 _SCHEMA = """
@@ -63,6 +64,7 @@ def hash_file(path: str | Path) -> str:
 
 
 class IngestionManifest:
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -72,6 +74,7 @@ class IngestionManifest:
 
     # -- source tracking -------------------------------------------------
 
+    @wrap_backend_errors
     def record_ingest(self, *, path: str, source_id: str, content_hash: str, chunk_count: int) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -90,6 +93,7 @@ class IngestionManifest:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def mark_removed(self, path: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -104,12 +108,14 @@ class IngestionManifest:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def source_id_for_path(self, path: str) -> str | None:
         row = self._conn.execute(
             "SELECT source_id FROM sources WHERE path = ? AND status = 'active'", (path,)
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def current_state(self) -> dict[str, SourceState]:
         rows = self._conn.execute(
             "SELECT path, source_id, content_hash, chunk_count, ingested_at "
@@ -125,6 +131,7 @@ class IngestionManifest:
 
     # -- snapshot tracking -----------------------------------------------
 
+    @wrap_backend_errors
     def begin_snapshot(self, tag: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -140,6 +147,7 @@ class IngestionManifest:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def complete_snapshot(
         self, tag: str, *, lancedb_version: int | None, backups: dict[str, str]
     ) -> Snapshot:
@@ -158,6 +166,7 @@ class IngestionManifest:
                 self._conn.execute("COMMIT")
         return self.get_snapshot(tag)
 
+    @wrap_backend_errors
     def get_snapshot(self, tag: str) -> Snapshot | None:
         row = self._conn.execute(
             "SELECT status, lancedb_version, backups_json, created_at FROM snapshots WHERE tag = ?",
@@ -171,6 +180,7 @@ class IngestionManifest:
             backups=json.loads(backups_json), created_at=created_at,
         )
 
+    @wrap_backend_errors
     def list_snapshots(self) -> list[Snapshot]:
         rows = self._conn.execute(
             "SELECT tag, status, lancedb_version, backups_json, created_at FROM snapshots "
@@ -182,6 +192,7 @@ class IngestionManifest:
             for tag, status, lancedb_version, backups_json, created_at in rows
         ]
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         target = sqlite3.connect(str(path))
         try:

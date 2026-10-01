@@ -23,6 +23,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ragcore.errors import wrap_backend_errors
 from ragcore.ingestion.base import DeadLetter
 
 
@@ -55,6 +56,7 @@ class SqliteIngestCheckpointStore:
     (source_id, group_id) attempt, plus a dead-letter table for
     ingest_many()."""
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -62,6 +64,7 @@ class SqliteIngestCheckpointStore:
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
 
+    @wrap_backend_errors
     def checkpoint(self, source_id: str, group_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT fingerprint FROM ingest_group_runs "
@@ -70,6 +73,7 @@ class SqliteIngestCheckpointStore:
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def mark_group_done(self, *, source_id: str, group_id: str, fingerprint: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -89,6 +93,7 @@ class SqliteIngestCheckpointStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def mark_group_failed(
         self, *, source_id: str, group_id: str, fingerprint: str, error: str
     ) -> None:
@@ -110,6 +115,7 @@ class SqliteIngestCheckpointStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def remove_source(self, source_id: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -123,6 +129,7 @@ class SqliteIngestCheckpointStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def mark_dead_letter(self, *, path: str, error: str, attempts: int) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -141,6 +148,7 @@ class SqliteIngestCheckpointStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def dead_letters(self) -> list[DeadLetter]:
         rows = self._conn.execute(
             "SELECT path, error, attempts, updated_at FROM ingest_dead_letters "
@@ -148,6 +156,7 @@ class SqliteIngestCheckpointStore:
         ).fetchall()
         return [DeadLetter(path=r[0], error=r[1], attempts=r[2], updated_at=r[3]) for r in rows]
 
+    @wrap_backend_errors
     def clear_dead_letter(self, path: str) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -159,6 +168,7 @@ class SqliteIngestCheckpointStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         """Online backup via the stdlib sqlite3 backup API — same pattern
         as every other SQLite-backed store in this codebase (see
@@ -169,6 +179,7 @@ class SqliteIngestCheckpointStore:
         finally:
             target.close()
 
+    @wrap_backend_errors
     def restore_from_backup(self, path: str | Path) -> None:
         with self._lock:
             source = sqlite3.connect(str(path))

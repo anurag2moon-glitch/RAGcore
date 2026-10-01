@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
-from ragcore.errors import StoreError
+from ragcore.errors import StoreError, wrap_backend_errors
 from ragcore.types import Chunk, ChunkMeta, Filter, Retrieved, SourceInfo, Vector
 
 try:
@@ -166,6 +166,7 @@ def _row_to_chunk(row: dict) -> Chunk:
 class LanceDBStore:
     """Default VectorStore: an embedded, on-disk LanceDB table."""
 
+    @wrap_backend_errors
     def __init__(
         self,
         path: str | Path,
@@ -189,6 +190,7 @@ class LanceDBStore:
         else:
             self._table = self._db.create_table(table_name, schema=_build_schema(dim))
 
+    @wrap_backend_errors
     def upsert(self, chunks: Sequence[Chunk]) -> None:
         if not chunks:
             return
@@ -205,6 +207,7 @@ class LanceDBStore:
         self._table.delete(f"chunk_id IN ({id_list})")
         self._table.add(rows)
 
+    @wrap_backend_errors
     def query(self, vector: Vector, k: int, filters: Filter | None = None) -> list[Retrieved]:
         q = self._table.search(vector).metric(self._metric).limit(k)
         where = _translate_filters(filters)
@@ -222,6 +225,7 @@ class LanceDBStore:
             results.append(Retrieved(chunk=_row_to_chunk(row), score=score))
         return results
 
+    @wrap_backend_errors
     def get(self, chunk_ids: Sequence[str]) -> list[Chunk]:
         if not chunk_ids:
             return []
@@ -229,6 +233,7 @@ class LanceDBStore:
         rows = self._table.search().where(f"chunk_id IN ({id_list})").limit(len(chunk_ids)).to_list()
         return [_row_to_chunk(row) for row in rows]
 
+    @wrap_backend_errors
     def get_by_source(self, source_id: str) -> list[Chunk]:
         rows = (
             self._table.search()
@@ -240,6 +245,7 @@ class LanceDBStore:
         chunks.sort(key=lambda c: c.meta.chunk_index)
         return chunks
 
+    @wrap_backend_errors
     def delete(
         self, *, source_id: str | None = None, chunk_ids: Sequence[str] | None = None
     ) -> int:
@@ -256,6 +262,7 @@ class LanceDBStore:
         after = self.count()
         return before - after
 
+    @wrap_backend_errors
     def list_sources(self) -> list[SourceInfo]:
         # Pull only the columns needed for the summary, via pyarrow directly
         # (not to_pandas(), which would pull in pandas as an undeclared
@@ -281,11 +288,13 @@ class LanceDBStore:
             for sid, n in counts.items()
         ]
 
+    @wrap_backend_errors
     def count(self) -> int:
         return self._table.count_rows()
 
     # -- versioning (item 7: incremental ingestion) ---------------------
 
+    @wrap_backend_errors
     def snapshot(self, tag: str) -> int:
         """Tags the table's current version for later rollback via
         restore_snapshot(tag) — uses LanceDB's own native version/tag
@@ -298,6 +307,7 @@ class LanceDBStore:
         self._table.tags.create(tag, version)
         return version
 
+    @wrap_backend_errors
     def restore_snapshot(self, tag: str) -> int:
         """Rolls back to the version tagged `tag`. LanceDB's version history
         is append-only — `restore()` creates a NEW version equivalent to the
@@ -308,11 +318,13 @@ class LanceDBStore:
         self._table.restore(version)
         return self._table.version
 
+    @wrap_backend_errors
     def list_snapshots(self) -> list[tuple[str, int]]:
         """Every (tag, version) pair currently recorded, for a caller
         implementing retention (see ragcore.versioning.snapshot)."""
         return [(tag, info["version"]) for tag, info in self._table.tags.list().items()]
 
+    @wrap_backend_errors
     def drop_snapshot(self, tag: str) -> None:
         """Removes a tag. The tagged version itself is not deleted by this
         call — dropping the tag only re-exposes that version to normal

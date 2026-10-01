@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Sequence
 
 from ragcore.concepts.types import Concept, ConceptEdge, CommunitySummary
+from ragcore.errors import wrap_backend_errors
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS concepts (
@@ -152,6 +153,7 @@ class SqliteConceptStore:
     that lock instead of raising immediately.
     """
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -161,6 +163,7 @@ class SqliteConceptStore:
 
     # -- extraction writes (single transaction, includes the checkpoint) --
 
+    @wrap_backend_errors
     def add_chapter_concepts(
         self,
         *,
@@ -243,6 +246,7 @@ class SqliteConceptStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def checkpoint(self, source_id: str, context_group_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT fingerprint FROM concept_runs "
@@ -251,6 +255,7 @@ class SqliteConceptStore:
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def mark_chapter_failed(
         self, *, source_id: str, context_group_id: str, fingerprint: str, error: str
     ) -> None:
@@ -274,6 +279,7 @@ class SqliteConceptStore:
 
     # -- reads: concepts ------------------------------------------------
 
+    @wrap_backend_errors
     def concept(self, concept_id: str) -> Concept | None:
         row = self._conn.execute(
             "SELECT label, description, vector_json, extra_json FROM concepts WHERE concept_id = ?",
@@ -292,10 +298,12 @@ class SqliteConceptStore:
             vector=tuple(json.loads(vector_json)) if vector_json else None,
         )
 
+    @wrap_backend_errors
     def all_concepts(self) -> list[Concept]:
         rows = self._conn.execute("SELECT concept_id FROM concepts").fetchall()
         return [c for (concept_id,) in rows if (c := self.concept(concept_id)) is not None]
 
+    @wrap_backend_errors
     def concepts_for_chunks(self, chunk_ids: Sequence[str]) -> dict[str, list[Concept]]:
         if not chunk_ids:
             return {}
@@ -321,9 +329,11 @@ class SqliteConceptStore:
             )
         return out
 
+    @wrap_backend_errors
     def chunks_for_concepts(self, concept_ids: Sequence[str]) -> dict[str, list[str]]:
         return self._chunk_ids_for_concepts(concept_ids)
 
+    @wrap_backend_errors
     def concept_vector(self, concept_id: str) -> tuple[float, ...] | None:
         row = self._conn.execute(
             "SELECT vector_json FROM concepts WHERE concept_id = ?", (concept_id,)
@@ -334,6 +344,7 @@ class SqliteConceptStore:
 
     # -- reads: edges ----------------------------------------------------
 
+    @wrap_backend_errors
     def all_edges(self) -> list[ConceptEdge]:
         rows = self._conn.execute(
             "SELECT edge_id, source_concept_id, target_concept_id, extra_json FROM concept_edges"
@@ -358,10 +369,12 @@ class SqliteConceptStore:
 
     # -- communities -------------------------------------------------------
 
+    @wrap_backend_errors
     def community_run_fingerprint(self) -> str | None:
         row = self._conn.execute("SELECT fingerprint FROM community_runs WHERE id = 1").fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def set_communities(self, *, run_fingerprint: str, assignments: dict[str, str]) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -384,22 +397,26 @@ class SqliteConceptStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def community_id_for_concept(self, concept_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT community_id FROM concept_communities WHERE concept_id = ?", (concept_id,)
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def concept_ids_for_community(self, community_id: str) -> list[str]:
         rows = self._conn.execute(
             "SELECT concept_id FROM concept_communities WHERE community_id = ?", (community_id,)
         ).fetchall()
         return [r[0] for r in rows]
 
+    @wrap_backend_errors
     def all_community_ids(self) -> list[str]:
         rows = self._conn.execute("SELECT DISTINCT community_id FROM concept_communities").fetchall()
         return [r[0] for r in rows]
 
+    @wrap_backend_errors
     def community_summary(self, community_id: str) -> CommunitySummary | None:
         row = self._conn.execute(
             "SELECT label, summary, agreements_json, divergences_json, concept_ids_json, "
@@ -410,6 +427,7 @@ class SqliteConceptStore:
         ).fetchone()
         return None if row is None else _row_to_summary(community_id, row)
 
+    @wrap_backend_errors
     def put_community_summary(self, summary: CommunitySummary) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -444,6 +462,7 @@ class SqliteConceptStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def communities_for_concepts(self, concept_ids: Sequence[str]) -> list[CommunitySummary]:
         if not concept_ids:
             return []
@@ -461,6 +480,7 @@ class SqliteConceptStore:
 
     # -- removal (item 7: incremental ingestion) -----------------------
 
+    @wrap_backend_errors
     def remove_chunk_ids(self, chunk_ids: Sequence[str]) -> None:
         """Prunes the given chunk_ids from every concept's/edge's
         provenance, deleting any concept or edge left with zero remaining
@@ -522,6 +542,7 @@ class SqliteConceptStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def remove_source(self, source_id: str) -> None:
         """Resolves every chunk_id currently referenced anywhere in this
         store that belongs to `source_id` — via the chunk_id prefix
@@ -548,6 +569,7 @@ class SqliteConceptStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def prune_orphan_summaries(self) -> None:
         """Deletes community_summaries rows for communities no longer
         present in concept_communities — closes the leak where
@@ -567,6 +589,7 @@ class SqliteConceptStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         """Online backup via the stdlib sqlite3 backup API — safe under
         concurrent readers in WAL mode, unlike a plain file copy. Used by
@@ -577,6 +600,7 @@ class SqliteConceptStore:
         finally:
             target.close()
 
+    @wrap_backend_errors
     def restore_from_backup(self, path: str | Path) -> None:
         """The reverse of backup_to: restores this store's live connection
         in place from a previously-taken backup file — see

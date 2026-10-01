@@ -18,6 +18,7 @@ import threading
 from pathlib import Path
 from typing import Sequence
 
+from ragcore.errors import wrap_backend_errors
 from ragcore.graph.types import Entity, Relation
 
 # extra fields that accumulate (set-union) across merges rather than being
@@ -89,6 +90,7 @@ class SqliteGraphStore:
     makes a writer wait for that lock instead of raising immediately.
     """
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -98,6 +100,7 @@ class SqliteGraphStore:
 
     # -- writes (merge, not replace) --------------------------------------
 
+    @wrap_backend_errors
     def add_entities(self, entities: Sequence[Entity]) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -131,6 +134,7 @@ class SqliteGraphStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def add_relations(self, relations: Sequence[Relation]) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -173,6 +177,7 @@ class SqliteGraphStore:
 
     # -- reads ---------------------------------------------------------
 
+    @wrap_backend_errors
     def neighbors(
         self,
         entity_ids: Sequence[str],
@@ -234,6 +239,7 @@ class SqliteGraphStore:
 
         return result
 
+    @wrap_backend_errors
     def entities_for_chunks(self, chunk_ids: Sequence[str]) -> dict[str, list[Entity]]:
         if not chunk_ids:
             return {}
@@ -261,6 +267,7 @@ class SqliteGraphStore:
             out.setdefault(chunk_id, []).append(entity)
         return out
 
+    @wrap_backend_errors
     def chunks_for_entities(self, entity_ids: Sequence[str]) -> dict[str, list[str]]:
         if not entity_ids:
             return {}
@@ -274,6 +281,7 @@ class SqliteGraphStore:
             out.setdefault(entity_id, []).append(chunk_id)
         return out
 
+    @wrap_backend_errors
     def entities_by_type(self, entity_type: str) -> list[Entity]:
         rows = self._conn.execute(
             "SELECT entity_id, name, extra_json FROM entities WHERE entity_type = ?",
@@ -297,6 +305,7 @@ class SqliteGraphStore:
 
     # -- removal (item 7: incremental ingestion) -----------------------
 
+    @wrap_backend_errors
     def remove_chunk_ids(self, chunk_ids: Sequence[str]) -> None:
         """Prunes the given chunk_ids from every entity's/relation's
         provenance, deleting any entity or relation left with zero
@@ -333,6 +342,7 @@ class SqliteGraphStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def remove_source(self, source_id: str) -> None:
         """Resolves every chunk_id currently referenced anywhere in this
         store that belongs to `source_id` — via the chunk_id prefix
@@ -348,6 +358,7 @@ class SqliteGraphStore:
         matching = [r[0] for r in rows if r[0].startswith(prefix)]
         self.remove_chunk_ids(matching)
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         """Online backup via the stdlib sqlite3 backup API — safe under
         concurrent readers in WAL mode, unlike a plain file copy. Used by
@@ -358,6 +369,7 @@ class SqliteGraphStore:
         finally:
             target.close()
 
+    @wrap_backend_errors
     def restore_from_backup(self, path: str | Path) -> None:
         """The reverse of backup_to: restores this store's live connection
         in place from a previously-taken backup file, via the same stdlib

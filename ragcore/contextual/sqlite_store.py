@@ -18,6 +18,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from ragcore.errors import wrap_backend_errors
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -48,6 +50,7 @@ class SqliteContextStore:
     per-chapter checkpoint mirroring ragcore.concepts.sqlite_store's
     concept_runs table."""
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -55,6 +58,7 @@ class SqliteContextStore:
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
 
+    @wrap_backend_errors
     def add_chapter_blurbs(
         self,
         *,
@@ -86,6 +90,7 @@ class SqliteContextStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def checkpoint(self, source_id: str, context_group_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT fingerprint FROM context_runs "
@@ -94,6 +99,7 @@ class SqliteContextStore:
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def mark_chapter_failed(
         self, *, source_id: str, context_group_id: str, fingerprint: str, error: str
     ) -> None:
@@ -115,12 +121,14 @@ class SqliteContextStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def blurb(self, chunk_id: str) -> str | None:
         row = self._conn.execute(
             "SELECT blurb FROM context_blurbs WHERE chunk_id = ?", (chunk_id,)
         ).fetchone()
         return row[0] if row else None
 
+    @wrap_backend_errors
     def remove_source(self, source_id: str) -> None:
         """Deletes every blurb and checkpoint row belonging to `source_id` —
         used by ragcore.versioning.sync.sync_corpus when a source is removed
@@ -136,6 +144,7 @@ class SqliteContextStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         """Online backup via the stdlib sqlite3 backup API — safe under
         concurrent readers in WAL mode, unlike a plain file copy. Used by
@@ -146,6 +155,7 @@ class SqliteContextStore:
         finally:
             target.close()
 
+    @wrap_backend_errors
     def restore_from_backup(self, path: str | Path) -> None:
         """The reverse of backup_to: restores this store's live connection
         in place from a previously-taken backup file — see

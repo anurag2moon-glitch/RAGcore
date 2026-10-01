@@ -24,7 +24,7 @@ import threading
 from pathlib import Path
 from typing import Sequence
 
-from ragcore.errors import StoreError
+from ragcore.errors import StoreError, wrap_backend_errors
 from ragcore.lexical.types import LexicalHit
 from ragcore.types import Chunk
 
@@ -61,6 +61,7 @@ class Fts5LexicalStore:
     that lock instead of raising immediately.
     """
 
+    @wrap_backend_errors
     def __init__(self, path: str | Path) -> None:
         self._conn = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         self._lock = threading.Lock()
@@ -72,6 +73,7 @@ class Fts5LexicalStore:
             "tokenize='porter unicode61')"
         )
 
+    @wrap_backend_errors
     def index(self, chunks: Sequence[Chunk]) -> None:
         if not chunks:
             return
@@ -93,6 +95,7 @@ class Fts5LexicalStore:
             else:
                 self._conn.execute("COMMIT")
 
+    @wrap_backend_errors
     def search(
         self, query: str, k: int, *, source_ids: Sequence[str] | None = None
     ) -> list[LexicalHit]:
@@ -112,6 +115,7 @@ class Fts5LexicalStore:
         rows = self._conn.execute(sql, params).fetchall()
         return [LexicalHit(chunk_id=row[0], rank=i) for i, row in enumerate(rows, start=1)]
 
+    @wrap_backend_errors
     def delete(
         self, *, source_id: str | None = None, chunk_ids: Sequence[str] | None = None
     ) -> int:
@@ -138,12 +142,14 @@ class Fts5LexicalStore:
                 self._conn.execute("COMMIT")
         return before - after
 
+    @wrap_backend_errors
     def count(self) -> int:
         return self._count_locked()
 
     def _count_locked(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM fts_chunks").fetchone()[0]
 
+    @wrap_backend_errors
     def backup_to(self, path: str | Path) -> None:
         """Online backup via the stdlib sqlite3 backup API — safe under
         concurrent readers in WAL mode, unlike a plain file copy (which can
@@ -155,6 +161,7 @@ class Fts5LexicalStore:
         finally:
             target.close()
 
+    @wrap_backend_errors
     def restore_from_backup(self, path: str | Path) -> None:
         """The reverse of backup_to: restores this store's live connection
         in place from a previously-taken backup file — see

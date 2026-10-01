@@ -8,12 +8,11 @@ successfully committed before the injected failure.
 from __future__ import annotations
 
 import os
-import sqlite3
 
 import pytest
 
 from ragcore.corpus import Corpus
-from ragcore.errors import RagcoreError
+from ragcore.errors import RagcoreError, StoreError
 from ragcore.graph.sqlite_store import SqliteGraphStore
 from ragcore.graph.types import Entity
 from ragcore.stores.lancedb import LanceDBStore
@@ -94,21 +93,19 @@ def test_store_write_failure_during_ingest_leaves_no_partial_write(
     assert len(remaining_sources) == 1  # only the healthy book
 
 
-def test_sqlite_graph_wal_sidecar_loss_is_a_real_unwrapped_failure(tmp_path) -> None:
-    """Documents a real design gap surfaced by fixing SqliteGraphStore's
-    concurrency (see docs/INTEGRATION_TEST_FINDINGS.md): enabling WAL mode
-    means recent writes live in the `-wal`/`-shm` sidecar files until a
-    checkpoint, not in the main `.sqlite3` file itself. Copying, backing
-    up, or restoring only the main file (a real, easy operational mistake)
-    silently loses everything not yet checkpointed — and, worse, reopening
-    the orphaned main file doesn't just show stale data, it raises a raw
-    `sqlite3.OperationalError`, not a `RagcoreError` — violating ragcore's
-    own stated exception-hierarchy contract (ragcore/errors.py: "All
-    library-raised exceptions derive from RagcoreError"). This test
-    documents current behavior; it is NOT fixed in this pass — flagged for
-    a design decision (checkpoint-on-close? wrap sqlite3 exceptions in
-    StoreError? document the operational requirement?) rather than
-    silently patched.
+def test_sqlite_graph_wal_sidecar_loss_raises_a_typed_store_error(tmp_path) -> None:
+    """Enabling WAL mode means recent writes live in the `-wal`/`-shm`
+    sidecar files until a checkpoint, not in the main `.sqlite3` file
+    itself. Copying, backing up, or restoring only the main file (a real,
+    easy operational mistake) silently loses everything not yet
+    checkpointed, and reopening the orphaned main file raises a backend
+    error — this test's job is to confirm that error surfaces as
+    ragcore.errors.StoreError (via ragcore.errors.wrap_backend_errors, see
+    docs/adr/0004-wrap-backend-exceptions-broadly.md), not a raw
+    sqlite3.OperationalError, per ragcore/errors.py's own stated
+    exception-hierarchy contract. Previously (docs/INTEGRATION_TEST_FINDINGS.md)
+    this test documented the opposite, unwrapped behavior as a known gap;
+    it now asserts the fixed behavior.
     """
     db_path = str(tmp_path / "graph.sqlite3")
     graph = SqliteGraphStore(db_path)
@@ -121,9 +118,8 @@ def test_sqlite_graph_wal_sidecar_loss_is_a_real_unwrapped_failure(tmp_path) -> 
     os.remove(db_path + "-wal")
     os.remove(db_path + "-shm")
 
-    with pytest.raises(sqlite3.OperationalError):
+    with pytest.raises(StoreError, match="disk I/O error"):
         SqliteGraphStore(db_path)
-    # ^ current behavior: a raw sqlite3 exception, NOT ragcore.errors.RagcoreError/StoreError.
 
 
 def test_malformed_inputs_raise_typed_errors_or_degrade_gracefully(fresh_corpus: Corpus, tmp_path) -> None:

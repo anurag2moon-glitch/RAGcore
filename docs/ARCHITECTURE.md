@@ -117,7 +117,7 @@ designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
 - ✅ Multi-file/folder batch upload, progress events, partial-failure
   reporting, re-ingest diffing (unchanged).
 
-### Phase 2 — Embedding and index layer — **items 8-10 done as of 2026-10-01**
+### Phase 2 — Embedding and index layer — **items 7-10 done as of 2026-10-01**
 - ✅ Provider abstraction — two providers now ship: `VoyageContextEmbedder`
   and `OpenAIEmbedder` (`ragcore/embedding/openai.py`,
   `docs/adr/0003-second-embedding-provider.md` for why OpenAI over local
@@ -264,19 +264,19 @@ already).
 
 ## 3. What's fragile
 
-1. **Unwrapped backend exceptions throughout the storage layer** (documented
-   already in `docs/INTEGRATION_TEST_FINDINGS.md`, re-confirmed here):
-   neither `SqliteGraphStore`/`SqliteConceptStore`/`SqliteClaimStore`/
-   `SqliteContextStore`/`SqliteHierarchyStore` nor `LanceDBStore` wrap
-   backend exceptions (`sqlite3.*`, LanceDB/pyarrow errors) into
-   `ragcore.errors.*`. This directly violates `errors.py`'s own stated
-   contract ("All library-raised exceptions derive from RagcoreError"). A
-   real, reproduced failure mode: losing a SQLite WAL sidecar file raises a
-   raw `sqlite3.OperationalError`, not a `StoreError`. This is the single
-   highest-value, lowest-risk fix flagged and *not yet made* — a prior
-   session explicitly deferred it pending a decision, and no commit since
-   addresses it (confirmed: `git log` shows no exception-wrapping commit
-   after `c38078c`).
+1. ~~Unwrapped backend exceptions throughout the storage layer~~
+   **Resolved in Phase 2** (gap list item 7): `ragcore.errors.wrap_backend_errors`
+   is now applied to every public method of every storage-layer class
+   (`SqliteGraphStore`, `SqliteConceptStore`, `SqliteClaimStore`,
+   `SqliteContextStore`, `SqliteHierarchyStore`, `Fts5LexicalStore`,
+   `IngestionManifest`, `LanceDBStore`, plus `SqliteIngestCheckpointStore`
+   and `SqliteEmbeddingCache` added since the original audit) — see
+   `docs/adr/0004-wrap-backend-exceptions-broadly.md` for the broad-catch
+   rationale. `errors.py`'s "All library-raised exceptions derive from
+   RagcoreError" contract is now actually true throughout the storage
+   layer, confirmed by
+   `tests/integration/test_failure_injection.py::test_sqlite_graph_wal_sidecar_loss_raises_a_typed_store_error`
+   (previously asserted the *old*, unwrapped behavior; now asserts the fix).
 2. ~~No stage-level resumability inside a single `Corpus.ingest()` call.~~
    **Resolved in Phase 1** via opt-in `checkpoint_store=...`
    (`ragcore.ingestion`) — see `docs/adr/0002`.
@@ -369,10 +369,9 @@ are omitted.
 6. ✅ A second `Chunker` strategy — `SemanticChunker`
    (`ragcore/chunking/semantic.py`).
 
-**Phase 2 (embedding/index): items 8-10 done, 7/11/12 remain.**
-7. ⬜ Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
-   (see §3.1 — highest value, lowest risk, already scoped by a prior
-   session) — next up.
+**Phase 2 (embedding/index): items 7-10 done, 11/12 remain.**
+7. ✅ Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
+   (`ragcore.errors.wrap_backend_errors`, `docs/adr/0004`).
 8. ✅ Second embedding provider — `OpenAIEmbedder`
    (`docs/adr/0003-second-embedding-provider.md`).
 9. ✅ Cost tracking — `ragcore.embedding.cost.UsageTracker`.
