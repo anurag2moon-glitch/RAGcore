@@ -51,10 +51,10 @@ orchestration function where relevant, and a store. Swappability is real —
 | `ingestion/` | Opt-in mid-`Corpus.ingest()` checkpointing + `ingest_many` dead-letter handling | `IngestCheckpointStore` protocol, `SqliteIngestCheckpointStore` | `test_ingest_checkpoint_store.py`, `test_ingest_checkpointing.py` |
 | `embedding/` | Text → vectors | `VoyageContextEmbedder` (contextualized), `OpenAIEmbedder` (flattens groups, no contextualization — see its module docstring); both batched/retried; `cost.UsageTracker` (`.usage`) and `cache.SqliteEmbeddingCache` (opt-in via `Corpus(embedding_cache=...)`) | `test_voyage_batching.py`, `test_openai_embedder.py`, `test_embedding_cost.py`, `test_embedding_cache*.py`; live tests opt-in |
 | `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags, `create_vector_index`/`compact`/`index_stats`) | `test_store_swap.py`, `test_lancedb_snapshot.py`, `test_lancedb_index_lifecycle.py`, integration concurrency/scale suite |
-| `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`, `QueryExpansionRetriever` (HyDE/multi-query/decomposition), `RoutedRetriever` (per-query mode routing); `fusion.rrf_merge` shared by the last two; `stack.default_stack()` wires the always-on default chain | One test file per layer + `test_default_stack.py` + integration load/query tests |
+| `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`, `QueryExpansionRetriever` (HyDE/multi-query/decomposition), `RoutedRetriever` (per-query mode routing), `DriftRetriever`/`graph_search_modes()` (named local/global/DRIFT); `fusion.rrf_merge` shared by all the RRF-fusing layers; `stack.default_stack()` wires the always-on default chain | One test file per layer + `test_default_stack.py` + integration load/query tests |
 | `lexical/` | BM25 full-text index | `Fts5LexicalStore` (stdlib SQLite FTS5, zero new deps) | `test_lexical_fts5.py`, `test_lexical_pipeline.py` |
-| `graph/` | Entity/relation extraction + GraphRAG store | `ClaudeEntityExtractor`, `SqliteGraphStore` (WAL, locked, merge-not-replace), `EmbeddingEntityResolver` | ~19 tests incl. concurrency, cross-book resolution, a real P&P fixture |
-| `concepts/` | Abstract concept/theme extraction + community detection + summaries | `ClaudeConceptExtractor`, `SqliteConceptStore`, Louvain via `networkx` (`concepts` extra), `EmbeddingConceptMapper`/`ClaudeConceptMapper` | `test_communities.py`, `test_concept_*.py` (extraction/removal/resume/retrieval/store) |
+| `graph/` | Entity/relation extraction + GraphRAG store | `ClaudeEntityExtractor` (book-tuned taxonomy, opt-in `gleaning_rounds`), `SqliteGraphStore` + `KuzuGraphStore` (WAL/locked and embedded-property-graph, both merge-not-replace), `EmbeddingEntityResolver`, shared `merge.merge_extra` | ~19+ tests incl. concurrency, cross-book resolution, a real P&P fixture; `test_kuzu_graph_store.py` (parametrized against both stores) |
+| `concepts/` | Abstract concept/theme extraction + community detection + summaries | `ClaudeConceptExtractor` (opt-in `gleaning_rounds`), `SqliteConceptStore`, Louvain or Leiden via `networkx` (`concepts` extra), `EmbeddingConceptMapper`/`ClaudeConceptMapper` | `test_communities.py`, `test_communities_leiden.py`, `test_concept_*.py` (extraction/removal/resume/retrieval/store) |
 | `contextual/` | Per-chunk situating blurb before re-embedding | `ClaudeContextWriter`, `SqliteContextStore` | `test_contextual_embeddings.py`, `test_contextual_resume.py` |
 | `hierarchy/` | chunk→section→chapter→book summarization | `ClaudeHierarchySummarizer`, `SqliteHierarchyStore` | `test_hierarchy*.py` (5 files) |
 | `claims/` | Atomic claim extraction + agree/conflict/extends linking (storage only, no retriever) | `ClaudeClaimExtractor`, `ClaudeClaimLinker`, `SqliteClaimStore` | `test_claims.py`, `test_claim_linking.py`, `test_claim_removal.py` |
@@ -185,30 +185,33 @@ New shared primitive from this phase: `ragcore.retrieval.fusion.rrf_merge`,
 extracted once a second caller (the query router) needed the identical
 RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
 
-### Phase 4 — GraphRAG
-- 🟡 Entity/relation extraction with typed schemas — `graph/` extracts
-  entities/relations; schema is generic (type + name), not the specific
-  book-tuned taxonomy the spec names (characters/concepts/people/places/
-  works/events/themes/claims) — though `concepts/` (themes) and `claims/`
-  (claims) exist as **separate layers**, not unified into one graph schema.
-  Gleaning passes (multi-round extraction) — ⬜, not found
-- ✅ Entity resolution/canonicalization — `EmbeddingEntityResolver`
-  (fuzzy + embedding match), content-addressed ids, alias merging,
-  cross-document linking proven at scale in integration tests. One
-  documented, accepted limitation: relationally-described entities with no
-  shared vocabulary (see CLAUDE.md "Known limitation")
-- 🟡 Graph storage behind an interface — ✅ interface (`GraphStore` protocol);
-  **only a SQLite implementation ships — no Kuzu, no Neo4j/Postgres
-  adapter** (spec wants Kuzu first)
-- 🟡 Hierarchical community detection — **Louvain via `networkx`, not
-  Leiden** as the spec specifies; community reports/summaries at one level
-  only (concepts/communities), not explicitly multi-level
-- ⬜ Search modes: local/global/DRIFT-style hybrid as named, selectable
-  modes — doesn't exist as such; `GraphRetriever` (local-ish, entity
-  neighborhood) and `ConceptRetriever` (community-summary-ish, global-ish)
-  exist as separate always-on layers, not a mode selector
-- ✅ Incremental graph updates, no full rebuild — `sync_corpus` +
-  `remove_chunk_ids`/`remove_source` on every graph-adjacent store
+### Phase 4 — GraphRAG — **complete as of 2026-10-01**
+- ✅ Entity/relation extraction with typed schemas — `ClaudeEntityExtractor`'s
+  prompt now names the book-tuned taxonomy (character/person/place/work/
+  organization/event), with "theme"/"claim" explicitly excluded (handled by
+  `concepts/`/`claims/` at their own granularity, by documented design —
+  see CLAUDE.md, not an oversight). `entity_type` stays open vocabulary at
+  the protocol level, unchanged. Gleaning passes — ✅
+  (`gleaning_rounds=...`, opt-in, on both `ClaudeEntityExtractor` and
+  `ClaudeConceptExtractor`).
+- ✅ Entity resolution/canonicalization — unchanged (`EmbeddingEntityResolver`).
+- ✅ Graph storage behind an interface — `KuzuGraphStore` now ships
+  alongside `SqliteGraphStore`, proven interchangeable via a parametrized
+  test suite run against both (Neo4j/Postgres adapters remain open).
+- ✅ Hierarchical community detection — `detect_communities(algorithm=...)`
+  now supports Leiden alongside the default Louvain (networkx's native
+  `leiden_communities`, no new dependency); still one flat level, not
+  explicitly multi-level (Leiden's main advantage over Louvain —
+  guaranteed-well-connected communities — isn't yet exercised by anything
+  multi-level in this codebase).
+- ✅ Search modes: local/global/DRIFT — `ragcore.retrieval.drift`
+  (`DriftRetriever`, `graph_search_modes()`), composing with Phase 3's
+  `RoutedRetriever` for per-query mode selection. DRIFT is a stated
+  simplification (fused-single-call local+global via RRF, not the GraphRAG
+  paper's iterative primer-then-decompose-then-refine algorithm) — see its
+  module docstring for the exact scope.
+- ✅ Incremental graph updates, no full rebuild — unchanged (`sync_corpus` +
+  `remove_chunk_ids`/`remove_source`, now also implemented on `KuzuGraphStore`).
 - ✅ Provenance on every node/edge back to chunk — content-addressed ids +
   `source_chunk_ids` unioned on every merge
 
@@ -411,20 +414,15 @@ Postgres-against-a-live-server verification remain as real, open work.**
 14. ✅ Query router — `ragcore.retrieval.routing`.
 15. ✅ Token-budget-aware context packer — `ragcore.generation.context_packer`.
 
-**Phase 4 (GraphRAG):**
-16. Unify/extend the entity-type taxonomy toward the book-tuned schema the
-    spec names (characters/people/places/works/events/themes/claims) —
-    today entities, concepts, and claims are three separate layers with
-    separate schemas.
-17. Gleaning passes (multi-round extraction) for `graph/`/`concepts/`.
-18. Kuzu graph-store adapter behind the existing `GraphStore` protocol
-    (today: SQLite only).
-19. Leiden (vs. current Louvain) if hierarchical multi-level community
-    detection becomes a real requirement — low priority, Louvain is working
-    and tested.
-20. Named search-mode selector (local/global/DRIFT) composing the existing
-    `GraphRetriever`/`ConceptRetriever` layers explicitly, rather than
-    always-on stacking.
+**Phase 4 (GraphRAG): done.**
+16. ✅ Book-tuned entity-type taxonomy in `ClaudeEntityExtractor`'s prompt
+    (themes/claims deliberately stay in `concepts/`/`claims/`, not unified —
+    see Phase 4 coverage section above for why).
+17. ✅ Gleaning passes — `gleaning_rounds=...` on both `ClaudeEntityExtractor`
+    and `ClaudeConceptExtractor`.
+18. ✅ Kuzu graph-store adapter — `ragcore.graph.KuzuGraphStore`.
+19. ✅ Leiden — `detect_communities(algorithm="leiden")`.
+20. ✅ Named search-mode selector — `ragcore.retrieval.drift`.
 
 **Phase 5 (generation/grounding):** 21. Model routing (cheap vs. strong per
 call site) and prompt caching on the `anthropic` client calls. 22. Streaming
