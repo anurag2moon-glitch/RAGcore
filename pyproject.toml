@@ -20,6 +20,7 @@ epub = ["ebooklib>=0.18", "selectolax>=0.3"]
 html = ["selectolax>=0.3"]
 docx = ["python-docx>=1.1"]
 voyage = ["voyageai>=0.3"]
+openai = ["openai>=1"]
 lancedb = ["lancedb>=0.13", "pyarrow>=16"]
 generation = ["anthropic>=1.0", "pydantic>=2"]
 concepts = ["networkx>=3"]
@@ -31,6 +32,7 @@ all = [
     "selectolax>=0.3",
     "python-docx>=1.1",
     "voyageai>=0.3",
+    "openai>=1",
     "lancedb>=0.13",
     "pyarrow>=16",
     "anthropic>=1.0",
