@@ -11,8 +11,9 @@ full breadcrumb, but is not itself filterable through the Filter DSL (use
 from __future__ import annotations
 
 import json
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from ragcore.errors import StoreError, wrap_backend_errors
 from ragcore.types import Chunk, ChunkMeta, Filter, Retrieved, SourceInfo, Vector
@@ -299,10 +300,14 @@ class LanceDBStore:
         """Tags the table's current version for later rollback via
         restore_snapshot(tag) — uses LanceDB's own native version/tag
         support (confirmed present in the installed lancedb, previously
-        unused by this store). A tagged version is exempt from
-        `cleanup_old_versions()`/`optimize()`, so a consumer running those
-        independently can't silently delete a snapshot out from under this
-        store. Returns the tagged version number."""
+        unused by this store). A tagged version is *protected*, not
+        silently exempted: `compact()` (LanceDB's `Table.optimize()`)
+        raises a StoreError instead of proceeding if the requested cleanup
+        window would remove a tagged version — confirmed empirically
+        (`tests/test_lancedb_index_lifecycle.py::test_compact_refuses_to_remove_a_tagged_snapshot`),
+        not merely assumed from LanceDB's docs. Drop the tag first
+        (`drop_snapshot`) if you really want to reclaim that space.
+        Returns the tagged version number."""
         version = self._table.version
         self._table.tags.create(tag, version)
         return version
@@ -331,3 +336,88 @@ class LanceDBStore:
         cleanup (`cleanup_old_versions()`/`optimize()`), which is the
         intended garbage-collection path."""
         self._table.tags.delete(tag)
+
+    # -- index lifecycle (item 11: compaction/tuning) ---------------------
+
+    @wrap_backend_errors
+    def create_vector_index(
+        self,
+        *,
+        method: Literal["ivf_pq", "hnsw_sq"] = "ivf_pq",
+        num_partitions: int | None = None,
+        replace: bool = True,
+    ) -> None:
+        """Builds an approximate-nearest-neighbor index on the vector
+        column. LanceDB does exact brute-force search until an index
+        exists — fine at small/medium scale, which is why this isn't
+        called automatically from `__init__`/`upsert`: an index build has
+        a real one-time cost, and a small corpus gets no query-speed
+        benefit from one, only that cost. Call this once a corpus is large
+        enough that query() latency matters (LanceDB's own guidance:
+        roughly tens of thousands of rows and up — see
+        scripts/benchmark_lancedb.py for measured numbers at a few
+        concrete sizes).
+
+        `ivf_pq` (default): IVF-PQ, LanceDB's standard disk-efficient
+        index. `hnsw_sq`: HNSW with scalar quantization — typically faster
+        queries at a higher build cost and memory footprint; prefer it
+        when query latency matters more than build time.
+
+        `num_partitions=None` lets LanceDB choose a partition count from
+        the table's current row count. Re-create the index (the default
+        `replace=True`) after the corpus has grown substantially — a
+        partition count sized for 10k rows under-partitions a table
+        that's since grown to 1M, degrading recall.
+        """
+        from lancedb.index import HnswSq, IvfPq
+
+        config = (
+            IvfPq(distance_type=self._metric, num_partitions=num_partitions)
+            if method == "ivf_pq"
+            else HnswSq(distance_type=self._metric, num_partitions=num_partitions)
+        )
+        self._table.create_index("vector", config=config, replace=replace)
+
+    @wrap_backend_errors
+    def compact(self, *, cleanup_older_than_days: float | None = None) -> None:
+        """Merges small write fragments into larger ones, prunes old table
+        versions, and refreshes any existing vector index with data added
+        since it was last built or compacted — LanceDB's three-in-one
+        `Table.optimize()` (its own docstring: "Modeled after VACUUM in
+        PostgreSQL"). If the requested cleanup window would remove a
+        tagged snapshot (see `snapshot()`), this raises a `StoreError`
+        instead of silently skipping or silently deleting it — compaction
+        never invalidates a snapshot out from under a caller relying on
+        it; drop the tag first (`drop_snapshot`) if that space really
+        should be reclaimed.
+
+        `cleanup_older_than_days=None` keeps LanceDB's own default
+        (versions older than 7 days are pruned); pass `0` to prune every
+        non-latest version immediately (subject to the tagged-version
+        protection above).
+        """
+        cleanup = (
+            timedelta(days=cleanup_older_than_days)
+            if cleanup_older_than_days is not None
+            else None
+        )
+        self._table.optimize(cleanup_older_than=cleanup)
+
+    @wrap_backend_errors
+    def index_stats(self) -> list[dict[str, Any]]:
+        """One summary dict per index currently on the table — lets a
+        caller check whether `create_vector_index()` has actually taken
+        effect, or whether rows added after the index was built are still
+        falling back to a brute-force scan for the unindexed portion
+        (`num_unindexed_rows` — nonzero means `compact()` or a fresh
+        `create_vector_index()` call would fold them in)."""
+        return [
+            {
+                "name": cfg.name,
+                "columns": list(cfg.columns),
+                "index_type": cfg.index_type,
+                "num_indexed_rows": cfg.num_indexed_rows,
+                "num_unindexed_rows": cfg.num_unindexed_rows,
+            }
+            for cfg in self._table.list_indices()
+        ]
