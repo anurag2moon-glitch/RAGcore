@@ -8,6 +8,7 @@ into those components, so swapping any one of them never touches this file.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
@@ -15,6 +16,7 @@ from typing import Any, Callable, Iterable, Sequence
 from ragcore.chunking.base import Chunker
 from ragcore.chunking.structural import StructuralChunker
 from ragcore.embedding.base import Embedder
+from ragcore.embedding.cache import CacheKey, EmbeddingCache
 from ragcore.errors import RagcoreError
 from ragcore.generation.base import Answer, Generator
 from ragcore.ingestion.base import IngestCheckpointStore
@@ -55,6 +57,13 @@ class Corpus:
     dependency; setting it makes `ingest()` resumable per-ChunkGroup, at
     the cost of upserting each group as soon as it's embedded instead of
     only once at the end.
+
+    `embedding_cache` is optional (default None): see
+    `ragcore.embedding.cache`. When set, `_embed_groups` skips the
+    Embedder call entirely for any ChunkGroup whose every chunk's
+    (content_hash, model_name, dim) is already cached — e.g. re-ingesting
+    an unchanged file, or a second book sharing boilerplate text with the
+    first, costs no embedding calls for that content the second time.
     """
 
     def __init__(
@@ -65,6 +74,7 @@ class Corpus:
         loaders: LoaderRegistry | None = None,
         generator: Generator | None = None,
         checkpoint_store: IngestCheckpointStore | None = None,
+        embedding_cache: EmbeddingCache | None = None,
     ) -> None:
         self.store = store
         self.embedder = embedder
@@ -73,6 +83,7 @@ class Corpus:
         self.retriever: Retriever = VectorRetriever(embedder, store)
         self.generator = generator
         self.checkpoint_store = checkpoint_store
+        self.embedding_cache = embedding_cache
 
     @classmethod
     def open(
@@ -304,9 +315,57 @@ class Corpus:
     def _embed_groups(self, groups: list[ChunkGroup]) -> list[ChunkGroup]:
         if not groups:
             return []
+        if self.embedding_cache is not None:
+            return self._embed_groups_with_cache(groups)
+
         text_groups = [[c.text for c in g.chunks] for g in groups]
         vector_groups = self.embedder.embed_groups(text_groups, input_type="document")
+        return self._apply_vectors(groups, vector_groups)
 
+    def _embed_groups_with_cache(self, groups: list[ChunkGroup]) -> list[ChunkGroup]:
+        """Caches at ChunkGroup granularity, not per-chunk: a contextualized
+        Embedder (e.g. VoyageContextEmbedder) embeds every chunk in a group
+        aware of its neighbors, so sending only a miss-subset of a group
+        would change what the embedder sees and risk a different vector
+        than if the whole group had been embedded together. A group is
+        only skipped when *every* chunk in it is already cached; otherwise
+        the whole group is re-embedded (and every chunk in it re-cached),
+        same as if there were no cache for that group at all."""
+        cache = self.embedding_cache
+        assert cache is not None
+        model_name, dim = self.embedder.name, self.embedder.dim
+
+        group_keys = [
+            [self._cache_key(c.text, model_name, dim) for c in g.chunks] for g in groups
+        ]
+        all_keys = [key for keys in group_keys for key in keys]
+        cached = cache.get_many(all_keys) if all_keys else {}
+
+        miss_groups = [
+            g for g, keys in zip(groups, group_keys, strict=True)
+            if any(key not in cached for key in keys)
+        ]
+        if miss_groups:
+            text_groups = [[c.text for c in g.chunks] for g in miss_groups]
+            freshly_embedded = self.embedder.embed_groups(text_groups, input_type="document")
+            new_entries: dict[CacheKey, Any] = {}
+            for g, vectors in zip(miss_groups, freshly_embedded, strict=True):
+                for c, v in zip(g.chunks, vectors, strict=True):
+                    new_entries[self._cache_key(c.text, model_name, dim)] = v
+            cache.put_many(new_entries)
+            cached = {**cached, **new_entries}
+
+        out: list[ChunkGroup] = []
+        for group, keys in zip(groups, group_keys, strict=True):
+            vectors = [cached[key] for key in keys]
+            out.append(ChunkGroup(group_id=group.group_id, chunks=[
+                dataclasses.replace(c, vector=v)
+                for c, v in zip(group.chunks, vectors, strict=True)
+            ]))
+        return out
+
+    @staticmethod
+    def _apply_vectors(groups: list[ChunkGroup], vector_groups: list[list[Any]]) -> list[ChunkGroup]:
         out: list[ChunkGroup] = []
         for group, vectors in zip(groups, vector_groups, strict=True):
             embedded_chunks = [
@@ -315,6 +374,10 @@ class Corpus:
             ]
             out.append(ChunkGroup(group_id=group.group_id, chunks=embedded_chunks))
         return out
+
+    @staticmethod
+    def _cache_key(text: str, model_name: str, dim: int) -> CacheKey:
+        return (hashlib.sha256(text.encode("utf-8")).hexdigest(), model_name, dim)
 
     @staticmethod
     def _report(

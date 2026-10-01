@@ -49,7 +49,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `loaders/` | File → `Document` | `pdf.py` (PyMuPDF, text + OCR fallback via injectable `ocr_fn`), `epub.py`, `docx.py`, `text.py` (txt/md), `html.py` | `test_loaders_structure.py`, `test_pdf_ocr.py` — incl. malformed-input handling |
 | `chunking/` | `Document` → `ChunkGroup`s | `StructuralChunker` (chapter-aware, token-budget packing, overlap, paragraph/sentence/char-level oversized splitting); `SemanticChunker` (embedding-boundary breakpoints) | `test_chunk_id_stability.py`, `test_semantic_chunker.py`, `test_page_hash.py` + integration suite |
 | `ingestion/` | Opt-in mid-`Corpus.ingest()` checkpointing + `ingest_many` dead-letter handling | `IngestCheckpointStore` protocol, `SqliteIngestCheckpointStore` | `test_ingest_checkpoint_store.py`, `test_ingest_checkpointing.py` |
-| `embedding/` | Text → vectors | `VoyageContextEmbedder` (voyage-context-4, contextualized, batched by inputs/chunks/tokens, retried) | `test_voyage_batching.py`; live test opt-in |
+| `embedding/` | Text → vectors | `VoyageContextEmbedder` (contextualized), `OpenAIEmbedder` (flattens groups, no contextualization — see its module docstring); both batched/retried; `cost.UsageTracker` (`.usage`) and `cache.SqliteEmbeddingCache` (opt-in via `Corpus(embedding_cache=...)`) | `test_voyage_batching.py`, `test_openai_embedder.py`, `test_embedding_cost.py`, `test_embedding_cache*.py`; live tests opt-in |
 | `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags) | `test_store_swap.py`, `test_lancedb_snapshot.py`, integration concurrency/scale suite |
 | `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`; `stack.default_stack()` wires the lot | One test file per layer + `test_default_stack.py` + integration load/query tests |
 | `lexical/` | BM25 full-text index | `Fts5LexicalStore` (stdlib SQLite FTS5, zero new deps) | `test_lexical_fts5.py`, `test_lexical_pipeline.py` |
@@ -117,18 +117,25 @@ designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
 - ✅ Multi-file/folder batch upload, progress events, partial-failure
   reporting, re-ingest diffing (unchanged).
 
-### Phase 2 — Embedding and index layer
-- 🟡 Provider abstraction — the `Embedder` protocol is real and swappable,
-  but **only one provider ships** (Voyage). No OpenAI/Cohere/local
-  sentence-transformers/BGE implementation exists. Batching/rate-limit/retry
-  — ✅ (per-provider, well done for Voyage). **Cost tracking — ⬜ entirely**
-  (no token/dollar accounting anywhere)
-- 🟡 Embedding cache keyed by content hash + model version — chunk_id is
-  content-addressed and re-embedding is naturally idempotent via upsert, but
-  there's no explicit cache keyed on `(hash, model_version)` that would skip
-  re-calling the embedder on an unchanged chunk re-ingested under a *new*
-  embedder version; versioned embeddings / zero-downtime re-embed migration
-  — ⬜
+### Phase 2 — Embedding and index layer — **items 8-10 done as of 2026-10-01**
+- ✅ Provider abstraction — two providers now ship: `VoyageContextEmbedder`
+  and `OpenAIEmbedder` (`ragcore/embedding/openai.py`,
+  `docs/adr/0003-second-embedding-provider.md` for why OpenAI over local
+  sentence-transformers/BGE as the second one — that remains a gap item,
+  just sequenced later). Batching/rate-limit/retry — ✅ for both.
+  **Cost tracking — ✅** (`ragcore.embedding.cost.UsageTracker`, wired into
+  both providers' `self.usage`; exact token/request counts always, a
+  dollar estimate only when a price is supplied or known for the model —
+  never a guessed number presented as fact).
+- ✅ Embedding cache keyed by `(content_hash, model_name, dim)` —
+  `ragcore.embedding.cache` (`EmbeddingCache` protocol,
+  `SqliteEmbeddingCache` default), opt-in via `Corpus(embedding_cache=...)`.
+  Caches at whole-`ChunkGroup` granularity (not per-chunk) to preserve
+  contextualized-embedding integrity — a group is skipped only when every
+  chunk in it is already cached. Zero-downtime re-embedding migration
+  falls out of the key shape for free: a model/dim change is a guaranteed
+  cache miss, so the old model's entries are undisturbed and still
+  servable while the new model's entries populate alongside them.
 - 🟡 Hybrid indexing: dense ✅ (LanceDB), BM25 ✅ (`lexical/` FTS5), full-text
   — same as BM25 here; **SPLADE — ⬜**
 - ⬜ Index lifecycle management: IVF-PQ/HNSW tuning, compaction, per-tenant
@@ -362,21 +369,20 @@ are omitted.
 6. ✅ A second `Chunker` strategy — `SemanticChunker`
    (`ragcore/chunking/semantic.py`).
 
-**Phase 2 (embedding/index):**
-7. Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
+**Phase 2 (embedding/index): items 8-10 done, 7/11/12 remain.**
+7. ⬜ Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
    (see §3.1 — highest value, lowest risk, already scoped by a prior
-   session).
-8. Second embedding provider (OpenAI or local BGE/sentence-transformers) to
-   prove the `Embedder` protocol is genuinely swappable, not swappable in
-   theory.
-9. Cost tracking on every provider call (tokens + $ per request, surfaced
-   on the Embedder/Generator, not just retried-and-discarded).
-10. Embedding-cache keyed by `(content_hash, model_version)` + a versioned
-    re-embedding migration path.
-11. Index lifecycle: compaction/tuning hooks on `LanceDBStore`, benchmark
+   session) — next up.
+8. ✅ Second embedding provider — `OpenAIEmbedder`
+   (`docs/adr/0003-second-embedding-provider.md`).
+9. ✅ Cost tracking — `ragcore.embedding.cost.UsageTracker`.
+10. ✅ Embedding cache keyed by `(content_hash, model_name, dim)` —
+    `ragcore.embedding.cache`; zero-downtime re-embedding migration falls
+    out of the key shape (see the Phase 2 coverage section above).
+11. ⬜ Index lifecycle: compaction/tuning hooks on `LanceDBStore`, benchmark
     harness at 10k/1M/10M chunks (today: untested past the 8-book
     integration-suite scale).
-12. S3-compatible raw-file storage + Postgres metadata/job store — real
+12. ⬜ S3-compatible raw-file storage + Postgres metadata/job store — real
     infrastructure work, sequence after the above, before Phase 7 proper.
 
 **Phase 3 (retrieval):**
