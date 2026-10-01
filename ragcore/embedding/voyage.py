@@ -31,6 +31,7 @@ import time
 from typing import Any, Literal, Sequence
 
 from ragcore.chunking.tokenizer import count_tokens
+from ragcore.embedding.cost import UsageTracker
 from ragcore.errors import EmbeddingError
 from ragcore.types import Vector
 
@@ -63,6 +64,7 @@ class VoyageContextEmbedder:
         max_retries: int = 5,
         max_tokens_per_request: int = 100_000,
         min_request_interval: float = 0.0,
+        price_per_million_tokens_usd: float | None = None,
     ) -> None:
         if client is None and voyageai is None:
             raise EmbeddingError(
@@ -80,6 +82,12 @@ class VoyageContextEmbedder:
         self._client = client or (
             voyageai.Client(api_key=api_key) if api_key else voyageai.Client()
         )
+        # No built-in default price here (unlike OpenAIEmbedder) — Voyage's
+        # per-model pricing isn't one this codebase has verified recently
+        # enough to bake in as a default; pass price_per_million_tokens_usd
+        # explicitly for a real estimated_cost_usd, see
+        # ragcore/embedding/cost.py's module docstring.
+        self.usage = UsageTracker(price_per_million_tokens_usd=price_per_million_tokens_usd)
 
     # -- Embedder protocol -------------------------------------------------
 
@@ -91,7 +99,13 @@ class VoyageContextEmbedder:
     ) -> list[list[Vector]]:
         results: list[list[Vector] | None] = [None] * len(groups)
         for indices, batch in self._batch(groups):
-            response = self._call_with_retry(batch, input_type)
+            batch_tokens = sum(count_tokens(t) for group in batch for t in group)
+            try:
+                response = self._call_with_retry(batch, input_type)
+            except EmbeddingError:
+                self.usage.record_failure()
+                raise
+            self.usage.record_success(batch_tokens)
             for local_idx, group_embeddings in enumerate(self._extract(response)):
                 results[indices[local_idx]] = group_embeddings
         # every index was assigned exactly once by _batch's partition of range(len(groups))

@@ -39,6 +39,7 @@ import time
 from typing import Any, Literal, Sequence
 
 from ragcore.chunking.tokenizer import count_tokens
+from ragcore.embedding.cost import UsageTracker
 from ragcore.errors import EmbeddingError
 from ragcore.types import Vector
 
@@ -49,6 +50,16 @@ except ImportError as e:  # pragma: no cover - exercised only when extra missing
     openai = None
 else:
     _IMPORT_ERROR = None
+
+# Best-effort list-price snapshot (USD per 1M input tokens), not a live
+# lookup — see ragcore/embedding/cost.py's module docstring. A model not
+# listed here gets no default price (UsageTracker.estimated_cost_usd stays
+# None) rather than a guessed number.
+_KNOWN_PRICES_PER_MILLION_TOKENS_USD = {
+    "text-embedding-3-small": 0.02,
+    "text-embedding-3-large": 0.13,
+    "text-embedding-ada-002": 0.10,
+}
 
 
 class OpenAIEmbedder:
@@ -67,6 +78,7 @@ class OpenAIEmbedder:
         max_retries: int = 5,
         max_tokens_per_request: int = 250_000,
         min_request_interval: float = 0.0,
+        price_per_million_tokens_usd: float | None = None,
     ) -> None:
         if client is None and openai is None:
             raise EmbeddingError(
@@ -81,6 +93,13 @@ class OpenAIEmbedder:
         self._last_request_at: float | None = None
         self._client = client or (
             openai.OpenAI(api_key=api_key) if api_key else openai.OpenAI()
+        )
+        self.usage = UsageTracker(
+            price_per_million_tokens_usd=(
+                price_per_million_tokens_usd
+                if price_per_million_tokens_usd is not None
+                else _KNOWN_PRICES_PER_MILLION_TOKENS_USD.get(model)
+            )
         )
 
     # -- Embedder protocol -------------------------------------------------
@@ -103,7 +122,13 @@ class OpenAIEmbedder:
 
         vectors_flat: list[Vector | None] = [None] * len(flat)
         for indices, batch in self._batch(flat):
-            response = self._call_with_retry(batch)
+            batch_tokens = sum(count_tokens(t) for t in batch)
+            try:
+                response = self._call_with_retry(batch)
+            except EmbeddingError:
+                self.usage.record_failure()
+                raise
+            self.usage.record_success(batch_tokens)
             for local_idx, vector in enumerate(self._extract(response)):
                 vectors_flat[indices[local_idx]] = vector
 
