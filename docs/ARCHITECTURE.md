@@ -50,7 +50,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `chunking/` | `Document` → `ChunkGroup`s | `StructuralChunker` (chapter-aware, token-budget packing, overlap, paragraph/sentence/char-level oversized splitting); `SemanticChunker` (embedding-boundary breakpoints) | `test_chunk_id_stability.py`, `test_semantic_chunker.py`, `test_page_hash.py` + integration suite |
 | `ingestion/` | Opt-in mid-`Corpus.ingest()` checkpointing + `ingest_many` dead-letter handling | `IngestCheckpointStore` protocol, `SqliteIngestCheckpointStore` | `test_ingest_checkpoint_store.py`, `test_ingest_checkpointing.py` |
 | `embedding/` | Text → vectors | `VoyageContextEmbedder` (contextualized), `OpenAIEmbedder` (flattens groups, no contextualization — see its module docstring); both batched/retried; `cost.UsageTracker` (`.usage`) and `cache.SqliteEmbeddingCache` (opt-in via `Corpus(embedding_cache=...)`) | `test_voyage_batching.py`, `test_openai_embedder.py`, `test_embedding_cost.py`, `test_embedding_cache*.py`; live tests opt-in |
-| `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags) | `test_store_swap.py`, `test_lancedb_snapshot.py`, integration concurrency/scale suite |
+| `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags, `create_vector_index`/`compact`/`index_stats`) | `test_store_swap.py`, `test_lancedb_snapshot.py`, `test_lancedb_index_lifecycle.py`, integration concurrency/scale suite |
 | `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`; `stack.default_stack()` wires the lot | One test file per layer + `test_default_stack.py` + integration load/query tests |
 | `lexical/` | BM25 full-text index | `Fts5LexicalStore` (stdlib SQLite FTS5, zero new deps) | `test_lexical_fts5.py`, `test_lexical_pipeline.py` |
 | `graph/` | Entity/relation extraction + GraphRAG store | `ClaudeEntityExtractor`, `SqliteGraphStore` (WAL, locked, merge-not-replace), `EmbeddingEntityResolver` | ~19 tests incl. concurrency, cross-book resolution, a real P&P fixture |
@@ -138,11 +138,14 @@ designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
   servable while the new model's entries populate alongside them.
 - 🟡 Hybrid indexing: dense ✅ (LanceDB), BM25 ✅ (`lexical/` FTS5), full-text
   — same as BM25 here; **SPLADE — ⬜**
-- ⬜ Index lifecycle management: IVF-PQ/HNSW tuning, compaction, per-tenant
-  table/partition strategy, benchmarks at 10k/1M/10M chunks — none of this
-  exists; `LanceDBStore` uses default LanceDB indexing with no tuning layer.
-  Versioned tables / rollback — 🟡 (LanceDB native tag/restore is wired for
-  *snapshots*, not for index-tuning rollback)
+- 🟡 Index lifecycle management — IVF-PQ/HNSW tuning and compaction: ✅
+  (`LanceDBStore.create_vector_index()`/`compact()`/`index_stats()`);
+  benchmarks: ✅ at the sizes actually run (`scripts/benchmark_lancedb.py`,
+  numbers in `docs/BENCHMARKS.md`, up to 50k chunks — 1M/10M are real,
+  runnable-but-not-yet-run gaps, left for real target hardware); per-tenant
+  table/partition strategy — ⬜, still Phase 7. Versioned tables / rollback
+  — 🟡 (unchanged: LanceDB native tag/restore is wired for snapshots, not
+  for index-tuning rollback).
 - ⬜ S3-compatible object storage for raw files, Postgres for
   metadata/jobs/tenancy — neither exists; everything is local SQLite files
   + an on-disk LanceDB directory
@@ -369,7 +372,7 @@ are omitted.
 6. ✅ A second `Chunker` strategy — `SemanticChunker`
    (`ragcore/chunking/semantic.py`).
 
-**Phase 2 (embedding/index): items 7-10 done, 11/12 remain.**
+**Phase 2 (embedding/index): items 7-10 done, 11 mostly done, 12 remains.**
 7. ✅ Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
    (`ragcore.errors.wrap_backend_errors`, `docs/adr/0004`).
 8. ✅ Second embedding provider — `OpenAIEmbedder`
@@ -378,9 +381,12 @@ are omitted.
 10. ✅ Embedding cache keyed by `(content_hash, model_name, dim)` —
     `ragcore.embedding.cache`; zero-downtime re-embedding migration falls
     out of the key shape (see the Phase 2 coverage section above).
-11. ⬜ Index lifecycle: compaction/tuning hooks on `LanceDBStore`, benchmark
-    harness at 10k/1M/10M chunks (today: untested past the 8-book
-    integration-suite scale).
+11. 🟡 Index lifecycle: compaction/tuning hooks on `LanceDBStore` — ✅
+    (`create_vector_index`/`compact`/`index_stats`); benchmark harness —
+    ✅ tool (`scripts/benchmark_lancedb.py`), run up to 50k chunks
+    (`docs/BENCHMARKS.md`); **1M/10M runs not yet executed** — real
+    remaining work, needs dedicated time/hardware, not a missing
+    mechanism.
 12. ⬜ S3-compatible raw-file storage + Postgres metadata/job store — real
     infrastructure work, sequence after the above, before Phase 7 proper.
 
