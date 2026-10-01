@@ -6,12 +6,22 @@ maintaining a breadcrumb stack updated whenever a TOC entry's page is
 reached, and tag each page's Block with the active breadcrumb and page
 number. A PDF with no embedded outline degrades to page-only structure
 (section_path == ()) — still useful, since page_start/page_end survive.
+
+A page with no embedded text layer (a scanned page: PyMuPDF's
+`get_text("text")` returns empty) falls back to OCR when `ocr=True` (the
+default): the page is rendered to a PNG pixmap and handed to `ocr_fn`
+(default `_tesseract_ocr`, lazily imported so `ragcore[pdf]` alone never
+requires pytesseract/Pillow/the tesseract binary for an all-text-layer
+corpus). `ocr_fn` is injectable so tests and alternative OCR backends
+don't need the real tesseract binary installed.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 from pathlib import Path
+from typing import Callable
 
 from ragcore.errors import LoaderError
 from ragcore.types import Block, Document
@@ -24,6 +34,8 @@ except ImportError as e:  # pragma: no cover - exercised only when extra missing
 else:
     _IMPORT_ERROR = None
 
+OcrFn = Callable[[bytes, str], str]
+
 
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -33,8 +45,41 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _tesseract_ocr(image_bytes: bytes, lang: str) -> str:
+    """Default `ocr_fn`: render bytes (PNG) -> text via pytesseract/Tesseract."""
+    try:
+        import pytesseract
+        from PIL import Image
+    except ImportError as e:
+        raise LoaderError(
+            "OCR fallback requires the 'ocr' extra: install ragcore[ocr]"
+        ) from e
+
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        return pytesseract.image_to_string(image, lang=lang)
+    except pytesseract.TesseractNotFoundError as e:
+        raise LoaderError(
+            "OCR fallback requires the tesseract binary on PATH (the 'ocr' "
+            "extra installs only the Python wrapper, not the OCR engine "
+            "itself — see https://tesseract-ocr.github.io/tessdoc/Installation.html)"
+        ) from e
+
+
 class PdfLoader:
     extensions = frozenset({".pdf"})
+
+    def __init__(
+        self,
+        ocr: bool = True,
+        ocr_lang: str = "eng",
+        ocr_dpi: int = 300,
+        ocr_fn: OcrFn | None = None,
+    ) -> None:
+        self._ocr = ocr
+        self._ocr_lang = ocr_lang
+        self._ocr_dpi = ocr_dpi
+        self._ocr_fn = ocr_fn or _tesseract_ocr
 
     def load(self, path: Path) -> Document:
         if fitz is None:
@@ -69,7 +114,11 @@ class PdfLoader:
                     stack.append("")
                 stack.append(heading)
 
-            text = doc[page_index].get_text("text").strip()
+            page_obj = doc[page_index]
+            text = page_obj.get_text("text").strip()
+            if not text and self._ocr:
+                pixmap = page_obj.get_pixmap(dpi=self._ocr_dpi)
+                text = self._ocr_fn(pixmap.tobytes("png"), self._ocr_lang).strip()
             if text:
                 blocks.append(
                     Block(text=text, page=page_num, section_path=tuple(stack))

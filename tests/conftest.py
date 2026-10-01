@@ -87,6 +87,23 @@ def pdf_book(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def scanned_pdf_book(tmp_path: Path) -> Path:
+    """A one-page PDF with an image and no embedded text layer at all —
+    get_text("text") returns "", the condition PdfLoader's OCR fallback
+    triggers on."""
+    fitz = pytest.importorskip("pymupdf")
+    path = tmp_path / "scanned.pdf"
+    doc = fitz.open()
+    page = doc.new_page()
+    pix = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 100, 100))
+    pix.set_rect(pix.irect, (255, 255, 255))
+    page.insert_image(fitz.Rect(72, 72, 172, 172), pixmap=pix)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+@pytest.fixture
 def epub_book(tmp_path: Path) -> Path:
     ebooklib = pytest.importorskip("ebooklib")
     from ebooklib import epub
