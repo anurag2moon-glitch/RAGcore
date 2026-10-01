@@ -51,7 +51,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `ingestion/` | Opt-in mid-`Corpus.ingest()` checkpointing + `ingest_many` dead-letter handling | `IngestCheckpointStore` protocol, `SqliteIngestCheckpointStore` | `test_ingest_checkpoint_store.py`, `test_ingest_checkpointing.py` |
 | `embedding/` | Text → vectors | `VoyageContextEmbedder` (contextualized), `OpenAIEmbedder` (flattens groups, no contextualization — see its module docstring); both batched/retried; `cost.UsageTracker` (`.usage`) and `cache.SqliteEmbeddingCache` (opt-in via `Corpus(embedding_cache=...)`) | `test_voyage_batching.py`, `test_openai_embedder.py`, `test_embedding_cost.py`, `test_embedding_cache*.py`; live tests opt-in |
 | `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags, `create_vector_index`/`compact`/`index_stats`) | `test_store_swap.py`, `test_lancedb_snapshot.py`, `test_lancedb_index_lifecycle.py`, integration concurrency/scale suite |
-| `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`; `stack.default_stack()` wires the lot | One test file per layer + `test_default_stack.py` + integration load/query tests |
+| `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`, `QueryExpansionRetriever` (HyDE/multi-query/decomposition), `RoutedRetriever` (per-query mode routing); `fusion.rrf_merge` shared by the last two; `stack.default_stack()` wires the always-on default chain | One test file per layer + `test_default_stack.py` + integration load/query tests |
 | `lexical/` | BM25 full-text index | `Fts5LexicalStore` (stdlib SQLite FTS5, zero new deps) | `test_lexical_fts5.py`, `test_lexical_pipeline.py` |
 | `graph/` | Entity/relation extraction + GraphRAG store | `ClaudeEntityExtractor`, `SqliteGraphStore` (WAL, locked, merge-not-replace), `EmbeddingEntityResolver` | ~19 tests incl. concurrency, cross-book resolution, a real P&P fixture |
 | `concepts/` | Abstract concept/theme extraction + community detection + summaries | `ClaudeConceptExtractor`, `SqliteConceptStore`, Louvain via `networkx` (`concepts` extra), `EmbeddingConceptMapper`/`ClaudeConceptMapper` | `test_communities.py`, `test_concept_*.py` (extraction/removal/resume/retrieval/store) |
@@ -59,7 +59,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `hierarchy/` | chunk→section→chapter→book summarization | `ClaudeHierarchySummarizer`, `SqliteHierarchyStore` | `test_hierarchy*.py` (5 files) |
 | `claims/` | Atomic claim extraction + agree/conflict/extends linking (storage only, no retriever) | `ClaudeClaimExtractor`, `ClaudeClaimLinker`, `SqliteClaimStore` | `test_claims.py`, `test_claim_linking.py`, `test_claim_removal.py` |
 | `conversation/` | Session transcript + history-aware query rewriting on top of `Corpus.ask()` | `InMemoryTranscriptStore`, `HistoryAwareQueryRewriter`, `PersonaChatSession` | `test_conversation_chat_session.py`, `test_conversation_transcript.py` |
-| `generation/` | Context + query → `Answer` | `ClaudeGenerator` | `test_generation.py`; live test opt-in |
+| `generation/` | Context + query → `Answer` | `ClaudeGenerator`, `context_packer.pack_context` (opt-in token-budget packing, dedupe, neighbor expansion, document ordering) | `test_generation.py`, `test_context_packer.py`, `test_claude_generator_context_packing.py`; live test opt-in |
 | `verification/` | Post-hoc per-claim faithfulness check | `ClaudeVerifier`, `VerifyingGenerator` (decorator) | `test_verification.py` |
 | `eval/` | General-purpose retrieval/groundedness eval harness for a *consumer's* corpus | `run_eval()`, `GoldQuestion` JSONL format, recall/precision/nDCG/MRR + optional groundedness | `test_eval_*.py` (4 files); distinct from `tests/integration/eval/`, ragcore's own internal regression harness |
 | `versioning/` | Incremental re-ingest (diff/sync), snapshots, rollback | `IngestionManifest`, `plan_sync`/`sync_corpus`, `LanceDBStore.snapshot()`, SQLite online-backup | `test_ingestion_manifest.py`, `test_sync_corpus.py`, `test_snapshot_rollback.py` |
@@ -160,29 +160,30 @@ designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
   claims, contextual, hierarchy) still has no Postgres counterpart.
   Tenancy — ⬜, still Phase 7.
 
-### Phase 3 — Retrieval engine
-- ✅ Hybrid retrieval with RRF, tunable — `HybridRetriever`
-- 🟡 Query understanding — query *rewriting* exists but only inside the
-  conversation layer (`HistoryAwareQueryRewriter`, history-aware condensation
-  only); **no standalone multi-query expansion, no HyDE, no query
-  decomposition into sub-queries** as a retrieval-layer primitive (the
-  `IterativeRetriever`'s hop loop is adjacent but is sufficiency-driven
-  re-querying, not explicit decomposition)
-- ✅ Cross-encoder reranking, pluggable, — `CrossEncoderReranker` +
-  `VoyageReranker`; score-threshold cutoff — `Corpus.retrieve(min_score=...)`
-- ✅ MMR diversity — `MMRReranker`; metadata filters — `Filter` DSL;
-  filter-aware pre-filtering — ✅ (LanceDB `.where()` pre-filters before
-  vector search, not post-filtered)
-- ⬜ Query router (vector vs keyword vs graph-local vs graph-global vs
-  combination, chosen *per query*) — does not exist. The stack is statically
-  composed once (`default_stack()`); there is no per-query routing decision
-- ✅ Agentic multi-hop retrieval with hard hop budget, stop criterion, full
-  trace — `IterativeRetriever` (`max_hops`, `SufficiencyJudge`,
-  `last_hops`/`hop_index`/`hop_query` provenance)
-- 🟡 Context packing: dedupe/ordering/parent expansion — partially implicit
-  (hierarchy/community summaries act as "parent expansion"); **no explicit
-  token-budget-aware context packer for a target model's context window** —
-  `ClaudeGenerator._format_context` just concatenates everything retrieved
+### Phase 3 — Retrieval engine — **complete as of 2026-10-01**
+- ✅ Hybrid retrieval with RRF, tunable — `HybridRetriever` (unchanged).
+- ✅ Query understanding — standalone retrieval-layer primitive now exists
+  alongside the conversation layer's history-aware rewriting:
+  `ragcore.retrieval.query_expansion` (`ClaudeQueryExpander` — one call
+  produces a HyDE passage, alternative phrasings, and sub-questions
+  together; `QueryExpansionRetriever` fuses the original query's and
+  every variant's results via RRF).
+- ✅ Cross-encoder reranking, MMR diversity, filters — unchanged.
+- ✅ Query router — `ragcore.retrieval.routing` (`ClaudeQueryRouter` +
+  `RoutedRetriever`): picks vector/keyword/graph_local/graph_global (or
+  any corpus-specific named modes) per query, fusing a combination via
+  the same RRF helper. An alternative composition point alongside
+  `default_stack()`, not a replacement for it.
+- ✅ Agentic multi-hop retrieval — unchanged (`IterativeRetriever`).
+- ✅ Context packing — `ragcore.generation.context_packer.pack_context`:
+  dedupe, token budgeting, document-order presentation, and opt-in
+  parent/neighbor expansion (via `Chunk.chunk_id`'s positional scheme,
+  no hard dependency on `ragcore.hierarchy`). Wired into `ClaudeGenerator`
+  via opt-in `context_max_tokens=...` — unset, `generate()` is unchanged.
+
+New shared primitive from this phase: `ragcore.retrieval.fusion.rrf_merge`,
+extracted once a second caller (the query router) needed the identical
+RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
 
 ### Phase 4 — GraphRAG
 - 🟡 Entity/relation extraction with typed schemas — `graph/` extracts
@@ -405,15 +406,10 @@ Postgres-against-a-live-server verification remain as real, open work.**
     **not yet run against a live server** — `docs/adr/0005`); extending
     the pattern to the other SQLite-backed stores remains open.
 
-**Phase 3 (retrieval):**
-13. Standalone query understanding layer: multi-query expansion, HyDE,
-    explicit decomposition — independent of the conversation layer's
-    history-aware rewriting (which only handles follow-up-turn condensation).
-14. Query router (vector/keyword/graph-local/graph-global/combination,
-    chosen per query) — the stack is currently static per corpus, not
-    adaptive per query.
-15. Token-budget-aware context packer for `ClaudeGenerator` (today: naive
-    concatenation of every retrieved chunk).
+**Phase 3 (retrieval): done.**
+13. ✅ Standalone query understanding layer — `ragcore.retrieval.query_expansion`.
+14. ✅ Query router — `ragcore.retrieval.routing`.
+15. ✅ Token-budget-aware context packer — `ragcore.generation.context_packer`.
 
 **Phase 4 (GraphRAG):**
 16. Unify/extend the entity-type taxonomy toward the book-tuned schema the
