@@ -64,6 +64,11 @@ _MODE_DESCRIPTIONS = {
     "graph_global": "a broad, thematic, or corpus-wide question better "
     "answered by cross-cutting community/theme summaries than by any "
     "single passage",
+    "drift": "a question that needs both: broad thematic/community-level "
+    "grounding AND specific entity-level detail together (see "
+    "ragcore.retrieval.drift.DriftRetriever) — prefer this single mode "
+    "over picking graph_local and graph_global separately when a query "
+    "clearly needs both at once",
 }
 
 
