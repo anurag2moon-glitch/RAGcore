@@ -61,6 +61,16 @@ class Block:
     text: str
     page: int | None
     section_path: tuple[str, ...]
+    page_hash: str | None = None
+    """sha256(text) of this block's own content, set only by loaders with a
+    real page concept (PdfLoader — see ragcore/loaders/pdf.py) and left
+    None everywhere else, matching `page` itself. Lets
+    ragcore.chunking.structural.StructuralChunker tag a chunk that doesn't
+    cross a page boundary with ChunkMeta.extra["page_hash"], giving
+    content-hash dedupe at the page granularity (alongside the existing
+    file-level `source_id` and the chunker's own per-chunk identity) —
+    e.g. detecting that a re-scanned copy of the same book has an
+    unchanged page without re-embedding it."""
 
 
 @dataclass(frozen=True)

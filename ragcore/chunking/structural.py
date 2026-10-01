@@ -19,6 +19,12 @@ group's own concatenated source text (each block's text joined by "\\n\\n",
 in the order the blocks appear in that group) — not the whole document.
 This keeps offsets well-defined for a chunk that spans multiple blocks
 without requiring the full document text to be held in memory at once.
+
+A chunk whose units all come from one page-bearing Block (PdfLoader only
+— see ragcore.types.Block.page_hash) gets `ChunkMeta.extra["page_hash"]`
+set to that page's content hash, for page-level dedupe; a chunk that
+straddles a page boundary gets no page_hash at all, deliberately, rather
+than one page's hash standing in for a mix of two.
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ _SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
 class _Unit:
     text: str
     page: int | None
+    page_hash: str | None
     section_path: tuple[str, ...]
     start: int
     end: int
@@ -112,6 +119,7 @@ def _blocks_to_units(blocks: list[Block]) -> list[_Unit]:
                 _Unit(
                     text=para,
                     page=block.page,
+                    page_hash=block.page_hash,
                     section_path=block.section_path,
                     start=offset + start,
                     end=offset + end,
@@ -133,6 +141,7 @@ def _expand_oversized(units: list[_Unit], chunk_size_tokens: int) -> list[_Unit]
                 _Unit(
                     text=text,
                     page=u.page,
+                    page_hash=u.page_hash,
                     section_path=u.section_path,
                     start=start,
                     end=end,
@@ -190,6 +199,15 @@ class StructuralChunker:
                     pages = [u.page for u in unit_batch if u.page is not None]
                     section_path = unit_batch[0].section_path
                     chapter_title, section = _derive_chapter_section(section_path)
+
+                    # A chunk gets a page-level dedupe hash only when every
+                    # unit in it comes from the same single page's Block —
+                    # a chunk straddling two pages has no one page whose
+                    # content it fully represents, so hashing it would
+                    # claim a false-precision dedupe signal.
+                    page_hashes = {u.page_hash for u in unit_batch if u.page_hash is not None}
+                    extra = {"page_hash": next(iter(page_hashes))} if len(page_hashes) == 1 else {}
+
                     meta = ChunkMeta(
                         source_id=doc.source_id,
                         source_path=doc.path,
@@ -206,6 +224,7 @@ class StructuralChunker:
                         char_start=unit_batch[0].start,
                         char_end=unit_batch[-1].end,
                         token_count=count_tokens(text),
+                        extra=extra,
                     )
                     chunks.append(
                         Chunk(

@@ -45,6 +45,10 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def _tesseract_ocr(image_bytes: bytes, lang: str) -> str:
     """Default `ocr_fn`: render bytes (PNG) -> text via pytesseract/Tesseract."""
     try:
@@ -121,7 +125,12 @@ class PdfLoader:
                 text = self._ocr_fn(pixmap.tobytes("png"), self._ocr_lang).strip()
             if text:
                 blocks.append(
-                    Block(text=text, page=page_num, section_path=tuple(stack))
+                    Block(
+                        text=text,
+                        page=page_num,
+                        section_path=tuple(stack),
+                        page_hash=_sha256_text(text),
+                    )
                 )
 
         meta = {k: v for k, v in (doc.metadata or {}).items() if v}
