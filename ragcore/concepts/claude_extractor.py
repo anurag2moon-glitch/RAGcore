@@ -78,6 +78,25 @@ class _ExtractedConcept(BaseModel):
 
 class _ConceptResult(BaseModel):
     concepts: list[_ExtractedConcept]
+    found_more: bool = True
+    """Only meaningful on a gleaning round's response (see
+    ClaudeConceptExtractor.extract) — the initial pass ignores it, same
+    convention as ragcore.graph.claude_extractor._ExtractionResult."""
+
+
+GLEANING_PROMPT = (
+    "Re-read the chapter text above carefully. List ONLY additional "
+    "concepts you missed on your first pass — do not repeat anything "
+    "already listed above (reuse that exact label if a chunk you missed "
+    "discusses one of those same ideas, rather than extracting it again "
+    "under a new label). If you're confident you found everything, set "
+    "found_more to false and leave concepts empty."
+)
+
+
+def _summarize_concepts_for_gleaning(concepts: Sequence[Concept]) -> str:
+    lines = [f"- {c.label}: {c.description}" for c in concepts] or ["(none)"]
+    return "Concepts found so far:\n" + "\n".join(lines)
 
 
 def _concept_id(label: str) -> str:
@@ -120,7 +139,13 @@ def _derive_edges(concepts: list[Concept]) -> list[ConceptEdge]:
 
 
 class ClaudeConceptExtractor:
-    """ConceptExtractor implementation using Claude (claude-opus-5 by default)."""
+    """ConceptExtractor implementation using Claude (claude-opus-5 by default).
+
+    `gleaning_rounds` (default 0, opt-in): see
+    ragcore.graph.claude_extractor.ClaudeEntityExtractor's identical
+    parameter — same gleaning technique, same early-stop-on-no-more-found
+    behavior, applied here to concepts instead of entities/relations.
+    """
 
     def __init__(
         self,
@@ -130,6 +155,7 @@ class ClaudeConceptExtractor:
         client: Any | None = None,
         max_tokens: int = 8192,
         max_retries: int = 5,
+        gleaning_rounds: int = 0,
     ) -> None:
         if client is None and anthropic is None:
             raise GenerationError(
@@ -140,6 +166,7 @@ class ClaudeConceptExtractor:
         self.model = model
         self._max_tokens = max_tokens
         self._max_retries = max_retries
+        self._gleaning_rounds = gleaning_rounds
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
@@ -149,7 +176,6 @@ class ClaudeConceptExtractor:
             return [], []
 
         formatted, index_to_chunk_id = _format_chunks(chunks)
-        parsed = self._call_with_retry(formatted)
 
         def _resolve(indices: list[int]) -> set[str]:
             # Silently drop any index outside the range we gave the model —
@@ -160,14 +186,40 @@ class ClaudeConceptExtractor:
         # Merge extracted entries sharing a normalized label into one
         # Concept — the model is instructed to reuse identical label text
         # for a recurring idea, but this also collapses near-duplicates
-        # that only differ by normalization-insignificant characters.
+        # that only differ by normalization-insignificant characters, and
+        # (for a gleaning round) a concept re-found under the same label.
         merged: dict[str, dict[str, Any]] = {}
-        for c in parsed.concepts:
-            concept_id = _concept_id(c.label)
-            entry = merged.setdefault(
-                concept_id, {"label": c.label, "description": c.description, "chunk_ids": set()}
+
+        def _absorb(parsed: _ConceptResult) -> None:
+            for c in parsed.concepts:
+                concept_id = _concept_id(c.label)
+                entry = merged.setdefault(
+                    concept_id, {"label": c.label, "description": c.description, "chunk_ids": set()}
+                )
+                entry["chunk_ids"] |= _resolve(c.chunk_indices)
+
+        messages: list[dict[str, Any]] = [{"role": "user", "content": formatted}]
+        parsed = self._call_with_retry(messages)
+        _absorb(parsed)
+
+        for _ in range(self._gleaning_rounds):
+            current_concepts = [
+                Concept(
+                    concept_id=cid,
+                    label=e["label"],
+                    description=e["description"],
+                    source_chunk_ids=tuple(sorted(e["chunk_ids"])),
+                )
+                for cid, e in merged.items()
+            ]
+            messages.append(
+                {"role": "assistant", "content": _summarize_concepts_for_gleaning(current_concepts)}
             )
-            entry["chunk_ids"] |= _resolve(c.chunk_indices)
+            messages.append({"role": "user", "content": GLEANING_PROMPT})
+            gleaned = self._call_with_retry(messages)
+            if not gleaned.found_more:
+                break
+            _absorb(gleaned)
 
         concepts = [
             Concept(
@@ -182,7 +234,7 @@ class ClaudeConceptExtractor:
 
         return concepts, _derive_edges(concepts)
 
-    def _call_with_retry(self, user_content: str) -> _ConceptResult:
+    def _call_with_retry(self, messages: list[dict[str, Any]]) -> _ConceptResult:
         last_err: Exception | None = None
         for attempt in range(self._max_retries):
             try:
@@ -190,7 +242,7 @@ class ClaudeConceptExtractor:
                     model=self.model,
                     max_tokens=self._max_tokens,
                     system=SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": user_content}],
+                    messages=messages,
                     output_format=_ConceptResult,
                 )
                 return response.parsed_output
