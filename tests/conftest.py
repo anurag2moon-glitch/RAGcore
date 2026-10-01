@@ -115,3 +115,19 @@ def epub_book(tmp_path: Path) -> Path:
 
     epub.write_epub(str(path), book)
     return path
+
+
+@pytest.fixture
+def html_book(tmp_path: Path) -> Path:
+    path = tmp_path / "book.html"
+    path.write_text(
+        "<html><head><title>Sample Book</title>"
+        "<style>.x{color:red}</style></head><body>"
+        f"<h1>{CH1_TITLE}</h1><p>{CH1_BODY}</p>"
+        f"<h2>{SEC_TITLE}</h2><p>{SEC_BODY}</p>"
+        f"<script>var x=1;</script>"
+        f"<h1>{CH2_TITLE}</h1><p>{CH2_BODY}</p>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    return path

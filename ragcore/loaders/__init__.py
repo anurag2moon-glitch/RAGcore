@@ -16,6 +16,7 @@ from ragcore.errors import LoaderError
 from ragcore.loaders.base import Loader
 from ragcore.loaders.docx import DocxLoader
 from ragcore.loaders.epub import EpubLoader
+from ragcore.loaders.html import HtmlLoader
 from ragcore.loaders.pdf import PdfLoader
 from ragcore.loaders.text import MarkdownLoader, TextLoader
 
@@ -25,6 +26,7 @@ _DEFAULT_LOADERS: tuple[Loader, ...] = (
     PdfLoader(),
     EpubLoader(),
     DocxLoader(),
+    HtmlLoader(),
 )
 
 
@@ -60,4 +62,5 @@ __all__ = [
     "PdfLoader",
     "EpubLoader",
     "DocxLoader",
+    "HtmlLoader",
 ]

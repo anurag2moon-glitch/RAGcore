@@ -13,9 +13,9 @@ from typing import Any, Literal
 
 from ragcore.graph.types import GraphContext
 
-SourceType = Literal["pdf", "epub", "docx", "txt", "md"]
+SourceType = Literal["pdf", "epub", "docx", "txt", "md", "html"]
 """What a Loader can produce. Closed — every Loader implementation emits one
-of these five, and Document.source_type / SourceInfo.source_type stay
+of these six, and Document.source_type / SourceInfo.source_type stay
 scoped to exactly this vocabulary."""
 
 ChunkOrigin = SourceType | Literal["synthetic"]

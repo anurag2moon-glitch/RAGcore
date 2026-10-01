@@ -79,3 +79,17 @@ def test_epub_loader_extracts_toc_breadcrumbs(epub_book: Path) -> None:
     assert ch1_blocks[0].section_path[0] == CH1_TITLE
     assert ch2_blocks[0].section_path[0] == CH2_TITLE
     assert SEC_BODY in ch1_blocks[0].text
+
+
+def test_html_loader_extracts_heading_breadcrumbs(html_book: Path) -> None:
+    from ragcore.loaders.html import HtmlLoader
+
+    doc = HtmlLoader().load(html_book)
+    assert doc.source_type == "html"
+    assert doc.title == "Sample Book"
+
+    by_text = {b.section_path: b.text for b in doc.blocks}
+    assert by_text[(CH1_TITLE,)] == CH1_BODY
+    assert by_text[(CH1_TITLE, SEC_TITLE)] == SEC_BODY
+    assert by_text[(CH2_TITLE,)] == CH2_BODY
+    assert "var x=1" not in " ".join(by_text.values())
