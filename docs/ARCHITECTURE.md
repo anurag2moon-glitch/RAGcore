@@ -15,9 +15,9 @@ downstream products (per project context: Mimisi, a philosopher-chat app, and
 Vastu Shastra, a rule engine) — see §4 for how well the current code respects
 that boundary.
 
-Total: ~11,700 lines across `ragcore/`, 24 submodules, ~80 test files
-(76 pass by default in ~7.7s; 4 more real-book tests opt-in via
-`pytest -m gutenberg`; 4 live-API tests opt-in via `pytest -m live`).
+Total (updated after Phase 1, 2026-10-01): ~12,700 lines across
+`ragcore/`, 25 submodules (added `ingestion/`), ~85 test files (336 pass
+by default; 10 more opt-in via `pytest -m "live or gutenberg"`).
 Zero `TODO`/`FIXME`/`XXX` markers anywhere in the package — every
 `except Exception` is deliberate and `# noqa`-annotated with a reason. This
 is a carefully, incrementally built codebase, not a prototype; **Phase 1-6
@@ -46,8 +46,9 @@ orchestration function where relevant, and a store. Swappability is real —
 | Module | Purpose | Default impl(s) | Tested |
 |---|---|---|---|
 | `types.py` / `errors.py` | Core frozen dataclasses (`Chunk`, `ChunkMeta`, `Document`, `Retrieved`, ...); typed exception hierarchy | — | Indirectly, via every other module's tests |
-| `loaders/` | File → `Document` | `pdf.py` (PyMuPDF, text only), `epub.py`, `docx.py`, `text.py` (txt/md) | `test_loaders_structure.py` — yes, incl. malformed-input handling |
-| `chunking/` | `Document` → `ChunkGroup`s | `StructuralChunker` (chapter-aware, token-budget packing, overlap, paragraph/sentence/char-level oversized splitting) | `test_chunk_id_stability.py` + integration suite |
+| `loaders/` | File → `Document` | `pdf.py` (PyMuPDF, text + OCR fallback via injectable `ocr_fn`), `epub.py`, `docx.py`, `text.py` (txt/md), `html.py` | `test_loaders_structure.py`, `test_pdf_ocr.py` — incl. malformed-input handling |
+| `chunking/` | `Document` → `ChunkGroup`s | `StructuralChunker` (chapter-aware, token-budget packing, overlap, paragraph/sentence/char-level oversized splitting); `SemanticChunker` (embedding-boundary breakpoints) | `test_chunk_id_stability.py`, `test_semantic_chunker.py`, `test_page_hash.py` + integration suite |
+| `ingestion/` | Opt-in mid-`Corpus.ingest()` checkpointing + `ingest_many` dead-letter handling | `IngestCheckpointStore` protocol, `SqliteIngestCheckpointStore` | `test_ingest_checkpoint_store.py`, `test_ingest_checkpointing.py` |
 | `embedding/` | Text → vectors | `VoyageContextEmbedder` (voyage-context-4, contextualized, batched by inputs/chunks/tokens, retried) | `test_voyage_batching.py`; live test opt-in |
 | `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags) | `test_store_swap.py`, `test_lancedb_snapshot.py`, integration concurrency/scale suite |
 | `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`; `stack.default_stack()` wires the lot | One test file per layer + `test_default_stack.py` + integration load/query tests |
@@ -77,43 +78,44 @@ preserved and extended, not replaced, as Phase 1+ work lands.
 
 Legend: ✅ covered · 🟡 partial · ⬜ missing (0%)
 
-### Phase 1 — Ingestion pipeline
-- ⬜ Async job queue, dead-letter handling, per-stage checkpointing for
-  *ingestion itself* (`Corpus.ingest()` is synchronous, in-process, no queue;
-  only the LLM-backed *add-on* passes — concepts/graph/claims/contextual/
-  hierarchy — are checkpointed, not ingestion's loader→chunk→embed→store path)
-- 🟡 Resumable/idempotent — content-addressed `source_id`/`chunk_id` makes
-  re-ingestion idempotent, and `sync_corpus` makes multi-file re-ingest
-  diff-aware, but there's no mid-ingestion resume for a single large file
-  (loader→chunk→embed→store runs as one call with no stage checkpoint)
-- ✅ Content-hash dedupe at file level (`source_id`) and chunk level
-  (`chunk_id`); not at page level (no separate page-hash concept)
-- 🟡 Parsers behind one interface: PDF, EPUB, DOCX, TXT, MD — ✅; HTML — ⬜
-  (no `loaders/html.py`); PDF OCR fallback for scanned pages — ⬜ (PyMuPDF
-  text extraction only, no Tesseract/OCR path — confirmed, zero `ocr`
-  references in the codebase)
-- ✅ Book-aware structure: TOC/chapters/sections, headers/footers/page
-  numbers, hyphenation — handled per-loader (not audited line-by-line per
-  loader in this pass, but `test_loaders_structure.py` + the P&P fixture
-  exercise real chapter/section extraction); multi-column PDF handling and
-  figure/table/caption extraction — not verified, likely absent (PyMuPDF
-  plain-text extraction mode)
-- ✅ Hierarchical chunking with parent-child-ish links — `hierarchy/` gives
-  chunk→section→chapter→book; `section_path` breadcrumbs carry structural
-  parentage
-- ✅ Layout-aware/semantic chunking, pluggable, configurable, overlap,
-  token-budget — `StructuralChunker` is the one strategy; it's pluggable
-  (the `Chunker` protocol) but no second strategy ships
-- ✅ Contextual chunk enrichment (situating blurb before embedding) —
-  `contextual/`
-- 🟡 Rich metadata schema — `ChunkMeta` has most fields (source_id, title,
-  chapter, page range, chunk_id, hash via content-addressing, timestamps via
-  `extra`); **no `tenant_id`, no `edition`, no `language`, no explicit
-  `ingest_version`** — all phase-7/multi-tenant fields are absent by design
-  today, matching Phase 7 being unstarted
+### Phase 1 — Ingestion pipeline — **complete as of 2026-10-01**
+
+Every item below is now ✅ except the one explicitly deferred to Phase 7
+(tenant/edition/language/ingest_version fields — deferred so they aren't
+designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
+`6596b95`.
+
+- ✅ Per-stage checkpointing for *ingestion itself*, opt-in via
+  `Corpus(checkpoint_store=...)` (`ragcore.ingestion`,
+  `docs/adr/0002-ingest-checkpointing-opt-in.md`): resumable per-`ChunkGroup`,
+  with dead-letter handling in `ingest_many(max_retries=...)`. Left opt-in
+  (not always-on) deliberately — see the ADR. A distributed job queue
+  (multiple workers/processes pulling from a shared queue, as opposed to
+  this single-process, in-library resumability) remains Phase 7/8 work —
+  this closes the *checkpointing* half of the original gap, not the
+  *queue* half, which belongs with the platform/deployment phases.
+- ✅ Resumable/idempotent, including mid-file (previously: only
+  whole-file/cross-file via `source_id`/`sync_corpus`).
+- ✅ Content-hash dedupe at file, page (`Block.page_hash`, PdfLoader only,
+  propagated to `ChunkMeta.extra["page_hash"]` for a chunk that doesn't
+  straddle a page boundary), and chunk level.
+- ✅ Parsers: PDF, EPUB, DOCX, TXT, MD, HTML (`loaders/html.py`) all behind
+  the one `Loader` interface; PDF OCR fallback for scanned pages
+  (`PdfLoader(ocr=True)`, pytesseract via an injectable `ocr_fn` seam,
+  `ragcore[ocr]` extra).
+- ✅ Book-aware structure (unchanged from before this pass).
+- ✅ Hierarchical chunking (unchanged).
+- ✅ Layout-aware/semantic chunking, pluggable, configurable per document
+  type — now two real strategies: `StructuralChunker` (default,
+  token-budget packing) and `SemanticChunker` (embedding-boundary
+  breakpoints, `ragcore/chunking/semantic.py`), both behind the same
+  `Chunker` protocol with no changes to it.
+- ✅ Contextual chunk enrichment (unchanged).
+- 🟡 Rich metadata schema — `tenant_id`/`edition`/`language`/
+  `ingest_version` remain deliberately deferred to Phase 7 (see Phase 1
+  gap list item 5 below, now the only open item in this phase).
 - ✅ Multi-file/folder batch upload, progress events, partial-failure
-  reporting — `Corpus.ingest_many()` + `IngestProgress` callback; re-ingest
-  diffing — `sync_corpus`
+  reporting, re-ingest diffing (unchanged).
 
 ### Phase 2 — Embedding and index layer
 - 🟡 Provider abstraction — the `Embedder` protocol is real and swappable,
@@ -268,10 +270,9 @@ already).
    session explicitly deferred it pending a decision, and no commit since
    addresses it (confirmed: `git log` shows no exception-wrapping commit
    after `c38078c`).
-2. **No stage-level resumability inside a single `Corpus.ingest()` call.**
-   A large book failing mid-embed re-runs load→chunk from scratch on retry
-   (idempotent, but not cheap at scale — no per-stage checkpoint the way
-   `build_concepts`/`build_graph`/etc. have).
+2. ~~No stage-level resumability inside a single `Corpus.ingest()` call.~~
+   **Resolved in Phase 1** via opt-in `checkpoint_store=...`
+   (`ragcore.ingestion`) — see `docs/adr/0002`.
 3. **Everything is single-process, single-machine.** `SqliteGraphStore`
    etc. are hardened for concurrent threads/processes against one file
    (verified in integration tests), but there is no distributed-queue or
@@ -294,15 +295,27 @@ already).
    entity's own alias-merge similarity elsewhere (see
    `INTEGRATION_TEST_FINDINGS.md`). Real, not hypothetical, low urgency
    until a real target corpus shows it costing retrieval quality.
-7. **No page-level dedupe**, only file- and chunk-level (spec asks for
-   file/page/chunk).
-8. **`SourceType` is a closed 5-value `Literal`** (`pdf`/`epub`/`docx`/
-   `txt`/`md`) — adding HTML (Phase 1 requirement) is a real, if small,
-   breaking-ish change: every `match`/`Literal`-dependent call site that
-   assumes exhaustiveness needs auditing, not just a new loader file.
-9. **`StructuralChunker` is the only chunking strategy** — "pluggable and
-   configurable per document type" (spec) is true at the protocol level but
-   not yet demonstrated with a second real strategy.
+7. ~~No page-level dedupe~~ **Resolved in Phase 1**
+   (`Block.page_hash`/`ChunkMeta.extra["page_hash"]`).
+8. ~~`SourceType` is a closed 5-value `Literal`~~ **Resolved in Phase 1**:
+   now six values (added `"html"`); confirmed via grep that no call site
+   pattern-matches on it exhaustively, so this was additive-only in
+   practice, not the breaking change this item originally warned about.
+9. ~~`StructuralChunker` is the only chunking strategy~~ **Resolved in
+   Phase 1**: `SemanticChunker` is a second, real implementation.
+10. **New from Phase 1**: `Chunk.chunk_id`'s own docstring overstates its
+    guarantee — it says "stable and content-addressed," but it's actually
+    `f"{source_id}:{chunk_index}"` (positional within a content-addressed
+    source, not a hash of the chunk's own text). Two different chunker
+    configurations over the same file could produce the identical
+    chunk_id sequence with different text at each index — harmless today
+    (nothing relies on chunk_id detecting a text change at a fixed
+    position), but `ragcore.ingestion.pipeline.group_fingerprint`
+    (Phase 1) had to hash chunk *text*, not `chunk_id`, specifically
+    because of this gap — see its module docstring and
+    `docs/adr/0002-ingest-checkpointing-opt-in.md`. Worth a docstring
+    correction next time that file is touched for an unrelated reason;
+    not fixed here to stay within this pass's actual scope.
 
 ## 4. Mimisi / Vastu Shastra boundary check
 
@@ -337,19 +350,17 @@ of mind when the two products eventually share infrastructure.
 Ordered to match the spec's own phase sequence; items already fully done
 are omitted.
 
-**Phase 1 (ingestion):**
-1. HTML loader (closes the stated format list).
-2. OCR fallback for scanned PDFs (Tesseract or equivalent behind the
-   existing `Loader` interface).
-3. Stage-level checkpointing *inside* `Corpus.ingest()` itself (today only
-   the add-on LLM passes checkpoint), with dead-letter handling for a
-   permanently-failing file in `ingest_many`.
-4. Page-level content hash (today: file + chunk only).
-5. `tenant_id`/`edition`/`language`/`ingest_version` fields on `ChunkMeta`
-   — deferred until Phase 7 design is settled, so these aren't bolted on
-   twice.
-6. A second `Chunker` strategy (semantic/embedding-boundary chunking) to
-   make "pluggable per document type" real, not just protocol-shaped.
+**Phase 1 (ingestion): done, except item 5 (deliberately deferred).**
+1. ✅ HTML loader (`loaders/html.py`).
+2. ✅ OCR fallback for scanned PDFs (`PdfLoader(ocr=True)`, `ragcore[ocr]`).
+3. ✅ Stage-level checkpointing inside `Corpus.ingest()`
+   (`checkpoint_store=...`, opt-in) with `ingest_many` dead-letter handling.
+4. ✅ Page-level content hash (`Block.page_hash` / `ChunkMeta.extra["page_hash"]`).
+5. ⬜ (deferred) `tenant_id`/`edition`/`language`/`ingest_version` fields on
+   `ChunkMeta` — deferred until Phase 7 design is settled, so these aren't
+   bolted on twice.
+6. ✅ A second `Chunker` strategy — `SemanticChunker`
+   (`ragcore/chunking/semantic.py`).
 
 **Phase 2 (embedding/index):**
 7. Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
