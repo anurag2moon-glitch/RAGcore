@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from ragcore.conversation.types import Turn
 from ragcore.errors import GenerationError
+from ragcore.model_routing import DEFAULT_ROUTING
 
 try:
     import anthropic
@@ -56,12 +57,13 @@ def _format_transcript(transcript: Sequence[Turn]) -> str:
 
 
 class HistoryAwareQueryRewriter:
-    """QueryRewriter implementation using Claude (claude-opus-5 by default)."""
+    """QueryRewriter implementation using Claude (cheap-tier by default —
+    see ragcore.model_routing; rewriting, not final-answer synthesis)."""
 
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 512,

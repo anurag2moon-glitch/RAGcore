@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from ragcore.claims.types import ClaimConfidence, ClaimRelation, ClaimRelationType, SourceClaim
 from ragcore.errors import GenerationError
 from ragcore.graph.claude_extractor import _format_chunks
+from ragcore.model_routing import DEFAULT_ROUTING
 
 if TYPE_CHECKING:
     from ragcore.concepts.types import Concept
@@ -135,12 +136,13 @@ def _format_concepts(concepts: Sequence[Concept]) -> tuple[str, dict[int, str]]:
 
 
 class ClaudeClaimExtractor:
-    """ClaimExtractor implementation using Claude (claude-opus-5 by default)."""
+    """ClaimExtractor implementation using Claude (cheap-tier by default —
+    see ragcore.model_routing; extraction, not final-answer synthesis)."""
 
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 8192,
@@ -234,12 +236,13 @@ class ClaudeClaimExtractor:
 
 
 class ClaudeClaimLinker:
-    """ClaimLinker implementation using Claude (claude-opus-5 by default)."""
+    """ClaimLinker implementation using Claude (cheap-tier by default —
+    see ragcore.model_routing; classification, not final-answer synthesis)."""
 
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 4096,

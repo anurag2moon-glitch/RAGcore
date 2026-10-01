@@ -30,6 +30,7 @@ from ragcore.concepts.base import ConceptMapper
 from ragcore.concepts.types import Concept
 from ragcore.errors import GenerationError
 from ragcore.graph.resolver import _cosine
+from ragcore.model_routing import DEFAULT_ROUTING
 
 if TYPE_CHECKING:
     from ragcore.embedding.base import Embedder
@@ -76,13 +77,15 @@ class _MappedConcepts(BaseModel):
 
 class ClaudeConceptMapper:
     """Optional refinement on top of an inner ConceptMapper's shortlist
-    (an EmbeddingConceptMapper by default). See module docstring."""
+    (an EmbeddingConceptMapper by default). See module docstring.
+    Cheap-tier model by default — see ragcore.model_routing;
+    classification, not final-answer synthesis."""
 
     def __init__(
         self,
         inner: ConceptMapper,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 1024,

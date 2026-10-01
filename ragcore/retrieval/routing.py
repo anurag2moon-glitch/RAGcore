@@ -27,6 +27,7 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 from pydantic import BaseModel
 
 from ragcore.errors import GenerationError
+from ragcore.model_routing import DEFAULT_ROUTING
 from ragcore.retrieval.base import Retriever
 from ragcore.retrieval.fusion import rrf_merge
 from ragcore.types import Filter, Retrieved
@@ -96,13 +97,13 @@ class _RoutingResult(BaseModel):
 
 
 class ClaudeQueryRouter:
-    """QueryRouter implementation using Claude (claude-opus-5 by
-    default)."""
+    """QueryRouter implementation using Claude (cheap-tier by default —
+    see ragcore.model_routing; classification, not final-answer synthesis)."""
 
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 512,

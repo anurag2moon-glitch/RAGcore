@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from ragcore.errors import GenerationError
 from ragcore.hierarchy.types import HierarchyLevel, HierarchyNode
+from ragcore.model_routing import DEFAULT_ROUTING
 
 try:
     import anthropic
@@ -57,13 +58,14 @@ class _HierarchySummaryResult(BaseModel):
 
 
 class ClaudeHierarchySummarizer:
-    """HierarchySummarizer implementation using Claude (claude-opus-5 by
-    default)."""
+    """HierarchySummarizer implementation using Claude (cheap-tier by
+    default — see ragcore.model_routing; an intermediate summary, not
+    final-answer synthesis)."""
 
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 4096,

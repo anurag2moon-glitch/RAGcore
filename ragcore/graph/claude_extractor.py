@@ -43,6 +43,7 @@ from pydantic import BaseModel
 from ragcore.errors import GenerationError
 from ragcore.graph.merge import merge_extra
 from ragcore.graph.types import Entity, Relation
+from ragcore.model_routing import DEFAULT_ROUTING
 
 if TYPE_CHECKING:
     # Deferred: ragcore.graph.__init__ imports this module, reached while
@@ -161,7 +162,8 @@ def _format_chunks(chunks: Sequence[Chunk]) -> tuple[str, dict[int, str]]:
 
 
 class ClaudeEntityExtractor:
-    """EntityExtractor implementation using Claude (claude-opus-5 by default).
+    """EntityExtractor implementation using Claude (cheap-tier by default —
+    see ragcore.model_routing; extraction, not final-answer synthesis).
 
     `gleaning_rounds` (default 0, opt-in) adds up to that many follow-up
     "did you miss anything?" passes per `extract()` call — the gleaning
@@ -174,7 +176,7 @@ class ClaudeEntityExtractor:
     def __init__(
         self,
         *,
-        model: str = "claude-opus-5",
+        model: str = DEFAULT_ROUTING.cheap,
         api_key: str | None = None,
         client: Any | None = None,
         max_tokens: int = 8192,
