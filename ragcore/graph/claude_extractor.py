@@ -15,6 +15,20 @@ relations cites many of them, so this is a real, measured cost difference,
 not a style preference. Entity/Relation.source_chunk_ids are unaffected —
 they still hold real chunk_id strings; only the wire format between this
 class and the model changed.
+
+`Entity.entity_type` is open vocabulary at the protocol level
+(ragcore/graph/types.py), but SYSTEM_PROMPT now names a concrete,
+book-tuned taxonomy (character/person/place/work/organization/event) —
+docs/ARCHITECTURE.md Phase 4 gap list item 16 — rather than the three
+generic examples it suggested before. "theme" and "claim" are
+deliberately *not* in this list: ragcore.concepts and ragcore.claims
+already extract those at their own granularity and schema (a concept is
+a proposition like "consequences of unchecked ambition," never a named
+entity; a claim is an atomic, attributed assertion) — see CLAUDE.md's
+concept-layer and claims-layer sections for why they're separate passes,
+not alternate entity_type values here. Folding them into this
+extractor's output would duplicate that work under a different, less
+suited schema, not unify anything.
 """
 
 from __future__ import annotations
@@ -51,12 +65,22 @@ SYSTEM_PROMPT = (
     "\"her mother\") to the actual named entity they refer to using the "
     "surrounding text; never extract a pronoun itself as a name.\n\n"
     "For every entity: give its fullest canonical name (e.g. \"Mr. Bingley\", not "
-    "\"he\" or just \"Bingley\"), a type (open vocabulary: \"person\", \"place\", "
-    "\"event\", or whatever fits), every distinct alias/surface form actually "
-    "used to refer to it in this text (e.g. \"Bingley\", \"his friend\" — text "
-    "strings that appear, not bare pronouns), and the bracketed number(s) of "
-    "the chunk(s) where it is mentioned (e.g. 1, 3 — not the text \"[1]\", just "
-    "the number itself).\n\n"
+    "\"he\" or just \"Bingley\"), a type, every distinct alias/surface form "
+    "actually used to refer to it in this text (e.g. \"Bingley\", \"his friend\" "
+    "— text strings that appear, not bare pronouns), and the bracketed number(s) "
+    "of the chunk(s) where it is mentioned (e.g. 1, 3 — not the text \"[1]\", "
+    "just the number itself).\n\n"
+    "entity_type is open vocabulary, but prefer one of these when it fits: "
+    "\"character\" (a named character in the narrative — the common case for "
+    "fiction), \"person\" (a real-world/historical person the text refers to, "
+    "distinct from a narrative character — common in nonfiction), \"place\", "
+    "\"work\" (a named book, painting, ship, or other created/referenced work "
+    "— not the entity reading/making/owning it), \"organization\", \"event\" "
+    "(a specific, named happening, not a recurring kind of event). Use a "
+    "different type only when none of these genuinely fits. Do not extract "
+    "abstract themes or propositions (e.g. \"ambition\", \"the cost of "
+    "betrayal\") as entities at all — a separate process handles those; you "
+    "only extract things with a name.\n\n"
     "For every relation between two entities: give a relation_type (open "
     "vocabulary: \"spouse_of\", \"parent_of\", \"friend_of\", \"resides_at\", or "
     "a narrative-specific type if that fits better), reference the two entities "
