@@ -117,7 +117,7 @@ designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
 - ✅ Multi-file/folder batch upload, progress events, partial-failure
   reporting, re-ingest diffing (unchanged).
 
-### Phase 2 — Embedding and index layer — **items 7-10 done as of 2026-10-01**
+### Phase 2 — Embedding and index layer — **functionally complete as of 2026-10-01**
 - ✅ Provider abstraction — two providers now ship: `VoyageContextEmbedder`
   and `OpenAIEmbedder` (`ragcore/embedding/openai.py`,
   `docs/adr/0003-second-embedding-provider.md` for why OpenAI over local
@@ -146,9 +146,19 @@ designed twice). See commits `c350ff5`, `e59d693`, `f7d55f1`, `770f38e`,
   table/partition strategy — ⬜, still Phase 7. Versioned tables / rollback
   — 🟡 (unchanged: LanceDB native tag/restore is wired for snapshots, not
   for index-tuning rollback).
-- ⬜ S3-compatible object storage for raw files, Postgres for
-  metadata/jobs/tenancy — neither exists; everything is local SQLite files
-  + an on-disk LanceDB directory
+- 🟡 S3-compatible object storage for raw files — ✅
+  (`ragcore.raw_files.S3RawFileStore`, tested against `moto`'s in-process
+  S3 mock). Postgres for metadata/jobs — 🟡: one protocol
+  (`IngestCheckpointStore`) has a real Postgres implementation
+  (`ragcore.ingestion.PostgresIngestCheckpointStore`), but unlike every
+  other store in this codebase it has **not been run against a live
+  Postgres server** — this environment has no Docker, no package manager,
+  and no Postgres binary available to test against (see
+  `docs/adr/0005-postgres-store-untested-against-live-server.md`); treat
+  it as implemented-but-unverified-by-execution until run once via
+  `pytest -m postgres`. Every other SQLite-backed store (graph, concepts,
+  claims, contextual, hierarchy) still has no Postgres counterpart.
+  Tenancy — ⬜, still Phase 7.
 
 ### Phase 3 — Retrieval engine
 - ✅ Hybrid retrieval with RRF, tunable — `HybridRetriever`
@@ -372,7 +382,10 @@ are omitted.
 6. ✅ A second `Chunker` strategy — `SemanticChunker`
    (`ragcore/chunking/semantic.py`).
 
-**Phase 2 (embedding/index): items 7-10 done, 11 mostly done, 12 remains.**
+**Phase 2 (embedding/index): items 7-10 done, 11 and 12 mostly done (12
+with a stated testing-confidence caveat on the Postgres half) — Phase 2
+is functionally complete, only 1M/10M benchmark runs and
+Postgres-against-a-live-server verification remain as real, open work.**
 7. ✅ Wrap every storage-layer backend exception in `ragcore.errors.StoreError`
    (`ragcore.errors.wrap_backend_errors`, `docs/adr/0004`).
 8. ✅ Second embedding provider — `OpenAIEmbedder`
@@ -387,8 +400,10 @@ are omitted.
     (`docs/BENCHMARKS.md`); **1M/10M runs not yet executed** — real
     remaining work, needs dedicated time/hardware, not a missing
     mechanism.
-12. ⬜ S3-compatible raw-file storage + Postgres metadata/job store — real
-    infrastructure work, sequence after the above, before Phase 7 proper.
+12. 🟡 S3-compatible raw-file storage — ✅ (`ragcore.raw_files.S3RawFileStore`).
+    Postgres metadata/job store — 🟡 (`PostgresIngestCheckpointStore`,
+    **not yet run against a live server** — `docs/adr/0005`); extending
+    the pattern to the other SQLite-backed stores remains open.
 
 **Phase 3 (retrieval):**
 13. Standalone query understanding layer: multi-query expansion, HyDE,

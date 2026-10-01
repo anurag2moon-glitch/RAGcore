@@ -20,10 +20,12 @@ See docs/adr/0002-ingest-checkpointing-opt-in.md.
 from __future__ import annotations
 
 from ragcore.ingestion.base import DeadLetter, IngestCheckpointStore
+from ragcore.ingestion.postgres_store import PostgresIngestCheckpointStore
 from ragcore.ingestion.sqlite_store import SqliteIngestCheckpointStore
 
 __all__ = [
     "DeadLetter",
     "IngestCheckpointStore",
+    "PostgresIngestCheckpointStore",
     "SqliteIngestCheckpointStore",
 ]
