@@ -37,7 +37,6 @@ this stack depends on.
 
 from __future__ import annotations
 
-import dataclasses
 import time
 from typing import Any, Protocol, runtime_checkable
 
@@ -45,6 +44,7 @@ from pydantic import BaseModel
 
 from ragcore.errors import GenerationError
 from ragcore.retrieval.base import Retriever
+from ragcore.retrieval.fusion import rrf_merge
 from ragcore.types import Filter, Retrieved
 
 try:
@@ -185,29 +185,5 @@ class QueryExpansionRetriever:
             return []
 
         variants = [query, *self._transform.expand(query)]
-
-        rrf_scores: dict[str, float] = {}
-        best_by_id: dict[str, Retrieved] = {}
-        contributing_variants: dict[str, list[str]] = {}
-
-        for variant_query in variants:
-            hits = self._inner.retrieve(variant_query, k=k, filters=filters)
-            for rank, r in enumerate(hits, start=1):
-                chunk_id = r.chunk.chunk_id
-                rrf_scores[chunk_id] = rrf_scores.get(chunk_id, 0.0) + 1.0 / (self._rrf_k + rank)
-                contributing_variants.setdefault(chunk_id, []).append(variant_query)
-                if chunk_id not in best_by_id or r.score > best_by_id[chunk_id].score:
-                    best_by_id[chunk_id] = r
-
-        ranked_ids = sorted(rrf_scores, key=lambda cid: rrf_scores[cid], reverse=True)
-
-        results: list[Retrieved] = []
-        for chunk_id in ranked_ids[:k]:
-            r = best_by_id[chunk_id]
-            extra = {
-                **r.chunk.meta.extra,
-                "query_expansion_variants": tuple(contributing_variants[chunk_id]),
-            }
-            stamped = dataclasses.replace(r.chunk, meta=dataclasses.replace(r.chunk.meta, extra=extra))
-            results.append(Retrieved(chunk=stamped, score=r.score))
-        return results
+        labeled = [(v, self._inner.retrieve(v, k=k, filters=filters)) for v in variants]
+        return rrf_merge(labeled, k=k, rrf_k=self._rrf_k, extra_key="query_expansion_variants")
