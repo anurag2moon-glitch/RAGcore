@@ -11,6 +11,10 @@ since a naive DOM walk that also descends into nested block elements (e.g.
 text. <script>/<style> contents are stripped before the heading regex runs,
 so inline script text containing a literal "<h1>" string can't be
 mistaken for structure.
+
+Uses `selectolax.lexbor.LexborHTMLParser`, not the `selectolax.parser`
+top-level import — see ragcore/loaders/epub.py's module docstring for
+why (selectolax 1.0 disabled that import path's backend outright).
 """
 
 from __future__ import annotations
@@ -23,7 +27,7 @@ from ragcore.errors import LoaderError
 from ragcore.types import Block, Document
 
 try:
-    from selectolax.parser import HTMLParser
+    from selectolax.lexbor import LexborHTMLParser as HTMLParser
 except ImportError as e:  # pragma: no cover - exercised only when extra missing
     _IMPORT_ERROR = e
     HTMLParser = None

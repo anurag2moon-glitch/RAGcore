@@ -1,0 +1,47 @@
+name: CI
+
+# docs/ARCHITECTURE.md Phase 6 gap list item 23: "wire eval_baseline.json
+# into an actual CI gate (needs a CI pipeline first — none exists)". This
+# is that pipeline. The regression-gate logic itself already existed in
+# tests/integration/test_eval_quality.py (it compares a fresh eval run
+# against the committed tests/integration/baselines/eval_baseline.json
+# with a tolerance, and fails the assertion on a real regression) — it
+# just never ran automatically anywhere, so a regression could land on
+# main without anyone noticing until they happened to run the integration
+# suite by hand. `pytest -q` here runs the whole suite, including that
+# test, on every push and pull request — this workflow failing *is* the
+# gate the gap item asks for, not a new mechanism on top of it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ragcore with every extra + dev tooling
+        run: pip install -e ".[all,dev]"
+
+      - name: Run the test suite
+        # addopts in pyproject.toml already excludes live/gutenberg/postgres
+        # (real external services this runner has no credentials for) —
+        # everything else, including the integration suite and its eval
+        # regression gate, runs here.
+        run: python -m pytest -q
+
+      - name: Lint (report only — not a merge gate yet)
+        # 141 pre-existing findings as of this workflow's introduction
+        # (mostly a repo-wide `collections.abc` import-style preference
+        # ruff would rewrite via --fix) predate this CI pipeline and
+        # aren't this pass's to clean up en masse. Reported for visibility
+        # without blocking merges until that backlog is actually addressed
+        # — flip continue-on-error to false once it's clean.
+        run: ruff check .
+        continue-on-error: true

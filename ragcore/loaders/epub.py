@@ -1,6 +1,16 @@
 """EPUB loader, backed by ebooklib (container/spine/TOC parsing) and
 selectolax (fast HTML-to-text).
 
+Uses `selectolax.lexbor.LexborHTMLParser`, not the `selectolax.parser`
+top-level import: selectolax 1.0 deprecated and disabled that path's
+"Modest" backend outright (`ImportError` at import time, not a
+DeprecationWarning), discovered by actually installing this package into
+a clean environment while setting up CI (docs/ARCHITECTURE.md Phase 6
+item 23) rather than trusting an already-populated dev venv pinned to an
+older selectolax. `LexborHTMLParser` has an identical API for everything
+this loader uses (`.body`, `.strip_tags()`, `.css_first()`,
+`.text(separator=, strip=)`, `.html`) — confirmed directly, not assumed.
+
 Structure comes from the EPUB's nav/TOC (`book.toc`), which maps hrefs
 (optionally with a `#fragment` anchor) to chapter/section titles in a
 nested tree. Many real-world EPUBs — notably Project Gutenberg's output —
@@ -27,7 +37,7 @@ from ragcore.types import Block, Document
 
 try:
     from ebooklib import ITEM_DOCUMENT, epub
-    from selectolax.parser import HTMLParser
+    from selectolax.lexbor import LexborHTMLParser as HTMLParser
 except ImportError as e:  # pragma: no cover - exercised only when extra missing
     _IMPORT_ERROR = e
     epub = None
