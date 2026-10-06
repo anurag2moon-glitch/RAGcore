@@ -215,20 +215,21 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
 - ✅ Provenance on every node/edge back to chunk — content-addressed ids +
   `source_chunk_ids` unioned on every merge
 
-### Phase 5 — Generation and grounding
-- 🟡 Inline citations at chunk level — ✅ (`Answer.citations`, numbered
-  `[n]` excerpts in the prompt); **page/chunk clickable spans** — the data
-  (`page_start`/`page_end`) is there, but nothing renders "clickable spans";
-  this is partly a frontend concern outside a library's scope
-- ✅ Faithfulness verification — `ClaudeVerifier`/`VerifyingGenerator`,
-  per-claim verdicts, `status="supported_by_synthesis"` distinction for
-  community-summary-sourced claims
-- ⬜ Streaming (SSE) — not applicable yet, no server exists; prompt caching
-  — not configured on the `anthropic.Anthropic()` client calls; model
-  routing (cheap model for rewriting/extraction, strong model for synthesis)
-  — ⬜, every Claude-backed component takes its own `model` param but nothing
-  centrally routes cheap-vs-strong; fallbacks — 🟡 (retry-with-backoff only,
-  no cross-provider fallback)
+### Phase 5 — Generation and grounding — **done as of 2026-10-06, except item 22 (blocked)**
+- 🟡 Inline citations at chunk level — ✅ (unchanged); **page/chunk clickable
+  spans** — still a frontend concern outside a library's scope, unchanged.
+- ✅ Faithfulness verification — unchanged (`ClaudeVerifier`/`VerifyingGenerator`).
+- 🟡 Streaming (SSE) — ⬜, still blocked on Phase 8's server existing at
+  all (not attempted — correctly sequenced, not forgotten). Prompt caching
+  — ✅ (`ragcore.prompt_caching`, opt-in `enable_prompt_caching=...` on
+  `ClaudeGenerator`/`ClaudeEntityExtractor`/`ClaudeConceptExtractor` — the
+  three components with genuine, non-speculative repeat-content reuse;
+  the other ~10 Claude-backed components don't have it yet, stated as
+  open follow-up, not claimed done). Model routing — ✅
+  (`ragcore.model_routing.DEFAULT_ROUTING`: 10 components now default to
+  a cheap tier, 3 final-answer-facing ones stay on the strong tier
+  unchanged). Fallbacks — 🟡 unchanged (retry-with-backoff only, no
+  cross-provider fallback — not attempted this pass).
 - 🟡 Abstention when evidence is insufficient — the default system prompt
   instructs the model to say so explicitly; no mechanical enforcement (it's
   prompt-level, not a checked behavior)
@@ -424,9 +425,11 @@ Postgres-against-a-live-server verification remain as real, open work.**
 19. ✅ Leiden — `detect_communities(algorithm="leiden")`.
 20. ✅ Named search-mode selector — `ragcore.retrieval.drift`.
 
-**Phase 5 (generation/grounding):** 21. Model routing (cheap vs. strong per
-call site) and prompt caching on the `anthropic` client calls. 22. Streaming
-(SSE) — blocked on Phase 8's server existing at all.
+**Phase 5 (generation/grounding): item 21 done, item 22 blocked (correctly, not forgotten).**
+21. ✅ Model routing (`ragcore.model_routing`) and prompt caching
+    (`ragcore.prompt_caching`, on `ClaudeGenerator`/the two gleaning-capable
+    extractors — not yet every Claude-backed component).
+22. ⬜ Streaming (SSE) — blocked on Phase 8's server existing at all.
 
 **Phase 6 (eval/observability):** 23. Wire `eval_baseline.json` into an
 actual CI gate (needs a CI pipeline first — none exists). 24. Synthetic
