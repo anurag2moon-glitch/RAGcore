@@ -61,7 +61,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `conversation/` | Session transcript + history-aware query rewriting on top of `Corpus.ask()` | `InMemoryTranscriptStore`, `HistoryAwareQueryRewriter`, `PersonaChatSession` | `test_conversation_chat_session.py`, `test_conversation_transcript.py` |
 | `generation/` | Context + query → `Answer` | `ClaudeGenerator`, `context_packer.pack_context` (opt-in token-budget packing, dedupe, neighbor expansion, document ordering) | `test_generation.py`, `test_context_packer.py`, `test_claude_generator_context_packing.py`; live test opt-in |
 | `verification/` | Post-hoc per-claim faithfulness check | `ClaudeVerifier`, `VerifyingGenerator` (decorator) | `test_verification.py` |
-| `eval/` | General-purpose retrieval/groundedness eval harness for a *consumer's* corpus | `run_eval()`, `GoldQuestion` JSONL format, recall/precision/nDCG/MRR + optional groundedness | `test_eval_*.py` (4 files); distinct from `tests/integration/eval/`, ragcore's own internal regression harness |
+| `eval/` | General-purpose retrieval/groundedness eval harness for a *consumer's* corpus | `run_eval()`, `GoldQuestion` JSONL format, recall/precision/nDCG/MRR/latency/tokens + optional groundedness, `ClaudeGoldSetGenerator` (synthetic QA from a real book) | `test_eval_*.py` (5 files); distinct from `tests/integration/eval/`, ragcore's own internal regression harness, now wired into `.github/workflows/ci.yml` on every push/PR |
 | `versioning/` | Incremental re-ingest (diff/sync), snapshots, rollback | `IngestionManifest`, `plan_sync`/`sync_corpus`, `LanceDBStore.snapshot()`, SQLite online-backup | `test_ingestion_manifest.py`, `test_sync_corpus.py`, `test_snapshot_rollback.py` |
 | `reranking/` | Cross-encoder rerank scoring | `VoyageReranker` (reuses Voyage API, zero new dep) | `test_voyage_reranker.py`, `test_cross_encoder.py` |
 
@@ -234,23 +234,32 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   instructs the model to say so explicitly; no mechanical enforcement (it's
   prompt-level, not a checked behavior)
 
-### Phase 6 — Evaluation and observability
-- 🟡 Eval harness — ✅ for a consumer's own corpus (`ragcore/eval/`:
-  recall@k/MRR/nDCG/precision/groundedness); **synthetic QA generation from
-  books — ⬜** (no generator for gold questions, only a manual authoring
-  helper `find_gold_passage`); answer-relevance metric — ⬜ (only
-  groundedness, not relevance); latency/cost per query — ⬜, not tracked
-  anywhere
-- ⬜ CI regression gate — the committed `eval_baseline.json` is a snapshot,
-  not wired into CI to block merges on regression; no CI config exists in
-  this repo at all (no `.github/workflows/`)
-- ⬜ A/B framework for chunking/embedding/reranker/prompt variants — doesn't
-  exist
-- ⬜ OpenTelemetry tracing, structured logs, per-tenant dashboards,
-  Langfuse-style trace viewing — none of this exists; **zero logging calls
-  found anywhere in `ragcore/`** (errors raise typed exceptions but nothing
-  is logged in the library itself, which is defensible for a library but
-  means a consumer has no trace surface to hook into yet)
+### Phase 6 — Evaluation and observability — **numbered gap items done as of 2026-10-06; two sub-items remain open**
+- ✅ Eval harness — recall@k/MRR/nDCG/precision/groundedness (unchanged)
+  **plus**, added this pass: synthetic QA generation from a real book
+  (`ragcore.eval.gold_generation.ClaudeGoldSetGenerator`) and
+  latency/cost per query (`RetrievalMetrics.latency_p50/p95/p99_ms`,
+  `total_tokens_used`; `QuestionResult.latency_ms`). Answer-relevance
+  metric (distinct from groundedness) — ⬜, still open, not attempted.
+- ✅ CI regression gate — `.github/workflows/ci.yml` runs the full suite
+  (including the already-existing `test_eval_quality.py` baseline
+  comparison) on every push/PR; that workflow failing *is* the gate.
+  Caught a real bug while validating it against a clean install:
+  selectolax 1.0 broke `EpubLoader`/`HtmlLoader`, fixed (see commit
+  `ec83168`). Lint runs report-only (141 pre-existing findings, not this
+  pass's to clean up en masse).
+- ⬜ A/B framework for chunking/embedding/reranker/prompt variants — still
+  doesn't exist as a dedicated harness; `ragcore.eval.report.compare()`
+  diffs two already-computed `EvalReport`s, which covers part of this,
+  but there's no variant-running convenience on top of it yet.
+- 🟡 Structured logging — ✅ (`logging.getLogger("ragcore.<module>")`,
+  no handler configured by the library; wired into `Corpus`,
+  `build_graph`, `build_concepts`, `detect_communities`/
+  `build_community_summaries`, both embedding providers' retry loops).
+  OpenTelemetry tracing, per-tenant dashboards, Langfuse-style trace
+  viewing — ⬜, still open; the other ~10 Claude-backed components
+  (extractors' own call-level detail, router, judge, rewriter, verifier,
+  generator) don't have logging yet either.
 
 ### Phase 7 — Multi-tenancy and platform
 ⬜ **Entirely absent.** No `tenant_id` anywhere in `types.py` or any store
@@ -431,12 +440,14 @@ Postgres-against-a-live-server verification remain as real, open work.**
     extractors — not yet every Claude-backed component).
 22. ⬜ Streaming (SSE) — blocked on Phase 8's server existing at all.
 
-**Phase 6 (eval/observability):** 23. Wire `eval_baseline.json` into an
-actual CI gate (needs a CI pipeline first — none exists). 24. Synthetic
-gold-question generation from a real book. 25. OpenTelemetry tracing +
-structured logging — currently **zero log calls anywhere in `ragcore`**;
-this is the single biggest observability gap and should land early, since
-every later phase benefits from it retroactively.
+**Phase 6 (eval/observability): items 23/24 done, 25 half done.**
+23. ✅ CI gate — `.github/workflows/ci.yml`.
+24. ✅ Synthetic gold-question generation — `ClaudeGoldSetGenerator`.
+25. 🟡 Structured logging — ✅ (stdlib `logging`, high-value paths).
+    OpenTelemetry tracing — ⬜, not attempted.
+26. ⬜ (unnumbered, from the coverage narrative) A/B framework for
+    chunking/embedding/reranker/prompt variants, and an answer-relevance
+    metric distinct from groundedness — both still open.
 
 **Phase 7 (multi-tenancy):** everything, from scratch — this is the next
 major phase boundary, not an extension of existing code. Start with
