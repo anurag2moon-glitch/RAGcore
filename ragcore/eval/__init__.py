@@ -18,6 +18,7 @@ and questions.
 """
 
 from ragcore.eval.dataset import find_gold_passage, load_gold_set, save_gold_set
+from ragcore.eval.gold_generation import ClaudeGoldSetGenerator
 from ragcore.eval.report import compare, format_report, run_eval
 from ragcore.eval.types import (
     EvalReport,
@@ -38,6 +39,7 @@ __all__ = [
     "load_gold_set",
     "save_gold_set",
     "find_gold_passage",
+    "ClaudeGoldSetGenerator",
     "run_eval",
     "format_report",
     "compare",
