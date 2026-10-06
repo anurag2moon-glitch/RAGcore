@@ -21,8 +21,10 @@ by default; 10 more opt-in via `pytest -m "live or gutenberg"`).
 Zero `TODO`/`FIXME`/`XXX` markers anywhere in the package — every
 `except Exception` is deliberate and `# noqa`-annotated with a reason. This
 is a carefully, incrementally built codebase, not a prototype; **Phase 1-6
-of the target spec are substantially (not fully) covered already**, and
-Phase 7-8 do not exist at all. See §2 for the precise breakdown.
+of the target spec are substantially (not fully) covered already**, Phase
+7 has its named foundation step done (`tenant_id` on `ChunkMeta` +
+`LanceDBStore`) with everything else in it still open, and Phase 8 does
+not exist at all. See §2 for the precise breakdown.
 
 `CLAUDE.md` (31KB) already functions as a living, detailed design-decision
 log — far more detailed than typical repo docs — covering nearly every
@@ -261,18 +263,33 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   (extractors' own call-level detail, router, judge, rewriter, verifier,
   generator) don't have logging yet either.
 
-### Phase 7 — Multi-tenancy and platform
-⬜ **Entirely absent.** No `tenant_id` anywhere in `types.py` or any store
-schema. No API keys, JWT/OAuth, RBAC, quotas, rate limiting, usage metering.
-No semantic/result cache. No export/hard-delete/retention policy beyond
-`Corpus.remove(source_id)` (which deletes vectors but the design doesn't
-yet reach every graph/concept/claim/hierarchy/context store uniformly as a
-single "delete everything for this tenant" operation — `sync_corpus`'s
-prune logic is the closest thing and operates per-source, not per-tenant).
-No encryption-at-rest config, audit logs, PII detection, prompt-injection
-defenses for ingested content, or copyright/licensing flag per document.
-This is expected — see §4, this is explicitly the next product-layer
-concern, deliberately not pulled into the shared base prematurely.
+### Phase 7 — Multi-tenancy and platform — 🟡 foundation step done (2026-10-06), everything else still open
+- ✅ `tenant_id` foundation — `ChunkMeta.tenant_id: str | None = None`
+  (opt-in, additive), wired through `Corpus.ingest()`/`ingest_many()`'s
+  new `tenant_id=...` param, and through `LanceDBStore`'s schema +
+  `_FILTERABLE_FIELDS` (so `filters={"tenant_id": "..."}` works against
+  the primary vector store; an old on-disk table without the column
+  migrates transparently on open). See
+  `docs/adr/0006-tenant-id-foundation-not-enforcement.md` for exactly
+  what this does and doesn't cover.
+- ⬜ `tenant_id` on every *other* store — `SqliteGraphStore`/
+  `KuzuGraphStore`, `SqliteConceptStore`, `SqliteClaimStore`,
+  `Fts5LexicalStore`, hierarchy/context stores — not done. Only the
+  vector store has it so far.
+- ⬜ **Isolation enforcement** — the field above makes tenant-scoped
+  filtering *possible*; nothing stops a caller from forgetting the
+  filter on a given query and reading across tenants. No guard,
+  middleware, or `Corpus` wrapper that forces it exists yet.
+- ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
+  metering ready for billing — none of this exists.
+- ⬜ Semantic/result cache with tenant-scoped invalidation — doesn't exist.
+- ⬜ Data lifecycle: export, hard delete (vectors + graph + files, all
+  stores, one tenant), retention policy — beyond `Corpus.remove(source_id)`
+  and `sync_corpus`'s per-source prune logic, neither of which is a
+  per-tenant operation today.
+- ⬜ Encryption at rest/in transit config, audit logs, PII detection,
+  prompt-injection defenses for ingested content, copyright/licensing
+  flag per document — none of this exists.
 
 ### Phase 8 — API, SDKs, deployment
 ⬜ **Entirely absent.** No FastAPI/any HTTP server, no OpenAPI spec, no
@@ -449,11 +466,23 @@ Postgres-against-a-live-server verification remain as real, open work.**
     chunking/embedding/reranker/prompt variants, and an answer-relevance
     metric distinct from groundedness — both still open.
 
-**Phase 7 (multi-tenancy):** everything, from scratch — this is the next
-major phase boundary, not an extension of existing code. Start with
-`tenant_id` propagation through `ChunkMeta` and every store schema, since
-every other Phase-7 item (quotas, isolation, metering) depends on that
-field existing first.
+**Phase 7 (multi-tenancy): foundation step 27 done, everything else (28+)
+still from scratch.**
+27. ✅ `tenant_id` on `ChunkMeta` + `Corpus.ingest()`/`ingest_many()` +
+    `LanceDBStore` (schema, filterable fields, transparent migration of
+    an existing on-disk table). See
+    `docs/adr/0006-tenant-id-foundation-not-enforcement.md`.
+28. ⬜ `tenant_id` on every other store (graph, concepts, claims, lexical,
+    hierarchy, context).
+29. ⬜ Isolation enforcement — nothing stops a caller from forgetting the
+    `tenant_id` filter; item 27 makes filtering possible, not mandatory.
+30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
+    billing-ready usage metering.
+31. ⬜ Semantic/result cache with tenant-scoped invalidation.
+32. ⬜ Data lifecycle: per-tenant export, hard delete across every store,
+    retention policy.
+33. ⬜ Encryption at rest/in transit, audit logs, PII detection,
+    prompt-injection defenses, per-document licensing flag.
 
 **Phase 8 (API/SDK/deployment):** everything, from scratch, after Phase 7's
 tenancy model is settled (an API surface built before tenant_id exists would
