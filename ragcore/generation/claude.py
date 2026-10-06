@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Sequence
 from ragcore.errors import GenerationError
 from ragcore.generation.base import Answer
 from ragcore.generation.context_packer import pack_context
+from ragcore.prompt_caching import cached_system
 from ragcore.types import Retrieved
 
 if TYPE_CHECKING:
@@ -61,6 +62,13 @@ class ClaudeGenerator:
     optional neighbor expansion via `corpus`/`expand_neighbors`, token
     budgeting, document-order presentation) and citations become only
     what actually made the prompt.
+
+    `enable_prompt_caching` (default False, opt-in): see
+    ragcore.prompt_caching. The system prompt is identical on every call
+    this Generator ever makes, so marking it cacheable lets a corpus that
+    calls `ask()`/`generate()` repeatedly skip reprocessing it past the
+    first call. Default False keeps `system=` a plain string, the exact
+    request shape every existing caller already gets.
     """
 
     def __init__(
@@ -76,6 +84,7 @@ class ClaudeGenerator:
         context_reserve_tokens: int = 0,
         corpus: Corpus | None = None,
         expand_neighbors: int = 0,
+        enable_prompt_caching: bool = False,
     ) -> None:
         if client is None and anthropic is None:
             raise GenerationError(
@@ -91,6 +100,7 @@ class ClaudeGenerator:
         self._context_reserve_tokens = context_reserve_tokens
         self._corpus = corpus
         self._expand_neighbors = expand_neighbors
+        self._enable_prompt_caching = enable_prompt_caching
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
@@ -123,7 +133,11 @@ class ClaudeGenerator:
                 return self._client.messages.create(
                     model=self.model,
                     max_tokens=self._max_tokens,
-                    system=self._system_prompt,
+                    system=(
+                        cached_system(self._system_prompt)
+                        if self._enable_prompt_caching
+                        else self._system_prompt
+                    ),
                     messages=[{"role": "user", "content": user_content}],
                 )
             except anthropic.RateLimitError as e:

@@ -44,6 +44,7 @@ from ragcore.errors import GenerationError
 from ragcore.graph.merge import merge_extra
 from ragcore.graph.types import Entity, Relation
 from ragcore.model_routing import DEFAULT_ROUTING
+from ragcore.prompt_caching import cached_system, cached_text_block
 
 if TYPE_CHECKING:
     # Deferred: ragcore.graph.__init__ imports this module, reached while
@@ -171,6 +172,13 @@ class ClaudeEntityExtractor:
     chapter a single pass under-extracts. A round stops early the moment
     the model reports nothing more found; 0 keeps `extract()`'s original
     single-pass behavior and cost exactly unchanged.
+
+    `enable_prompt_caching` (default False, opt-in): see
+    ragcore.prompt_caching. Caches the system prompt (identical on every
+    call) and, when `gleaning_rounds > 0`, the first user turn too — the
+    chapter text is resent verbatim as the conversation's first turn on
+    every gleaning round, so marking it cacheable lets round 2+ skip
+    reprocessing it.
     """
 
     def __init__(
@@ -182,6 +190,7 @@ class ClaudeEntityExtractor:
         max_tokens: int = 8192,
         max_retries: int = 5,
         gleaning_rounds: int = 0,
+        enable_prompt_caching: bool = False,
     ) -> None:
         if client is None and anthropic is None:
             raise GenerationError(
@@ -193,6 +202,7 @@ class ClaudeEntityExtractor:
         self._max_tokens = max_tokens
         self._max_retries = max_retries
         self._gleaning_rounds = gleaning_rounds
+        self._enable_prompt_caching = enable_prompt_caching
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
@@ -261,7 +271,10 @@ class ClaudeEntityExtractor:
                     )
                 )
 
-        messages: list[dict[str, Any]] = [{"role": "user", "content": formatted}]
+        first_turn_content = (
+            [cached_text_block(formatted)] if self._enable_prompt_caching else formatted
+        )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": first_turn_content}]
         parsed = self._call_with_retry(messages)
         _absorb(parsed)
 
@@ -283,7 +296,7 @@ class ClaudeEntityExtractor:
                 response = self._client.messages.parse(
                     model=self.model,
                     max_tokens=self._max_tokens,
-                    system=SYSTEM_PROMPT,
+                    system=cached_system(SYSTEM_PROMPT) if self._enable_prompt_caching else SYSTEM_PROMPT,
                     messages=messages,
                     output_format=_ExtractionResult,
                 )

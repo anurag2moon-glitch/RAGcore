@@ -31,6 +31,7 @@ from ragcore.concepts.types import Concept, ConceptEdge
 from ragcore.errors import GenerationError
 from ragcore.graph.claude_extractor import _format_chunks, _normalize
 from ragcore.model_routing import DEFAULT_ROUTING
+from ragcore.prompt_caching import cached_system, cached_text_block
 
 if TYPE_CHECKING:
     from ragcore.types import Chunk
@@ -147,6 +148,10 @@ class ClaudeConceptExtractor:
     ragcore.graph.claude_extractor.ClaudeEntityExtractor's identical
     parameter — same gleaning technique, same early-stop-on-no-more-found
     behavior, applied here to concepts instead of entities/relations.
+
+    `enable_prompt_caching` (default False, opt-in): see
+    ragcore.prompt_caching — same rationale as
+    ClaudeEntityExtractor's identical parameter.
     """
 
     def __init__(
@@ -158,6 +163,7 @@ class ClaudeConceptExtractor:
         max_tokens: int = 8192,
         max_retries: int = 5,
         gleaning_rounds: int = 0,
+        enable_prompt_caching: bool = False,
     ) -> None:
         if client is None and anthropic is None:
             raise GenerationError(
@@ -169,6 +175,7 @@ class ClaudeConceptExtractor:
         self._max_tokens = max_tokens
         self._max_retries = max_retries
         self._gleaning_rounds = gleaning_rounds
+        self._enable_prompt_caching = enable_prompt_caching
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
@@ -200,7 +207,10 @@ class ClaudeConceptExtractor:
                 )
                 entry["chunk_ids"] |= _resolve(c.chunk_indices)
 
-        messages: list[dict[str, Any]] = [{"role": "user", "content": formatted}]
+        first_turn_content = (
+            [cached_text_block(formatted)] if self._enable_prompt_caching else formatted
+        )
+        messages: list[dict[str, Any]] = [{"role": "user", "content": first_turn_content}]
         parsed = self._call_with_retry(messages)
         _absorb(parsed)
 
@@ -243,7 +253,7 @@ class ClaudeConceptExtractor:
                 response = self._client.messages.parse(
                     model=self.model,
                     max_tokens=self._max_tokens,
-                    system=SYSTEM_PROMPT,
+                    system=cached_system(SYSTEM_PROMPT) if self._enable_prompt_caching else SYSTEM_PROMPT,
                     messages=messages,
                     output_format=_ConceptResult,
                 )
