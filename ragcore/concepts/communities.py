@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -45,6 +46,8 @@ from ragcore.concepts.base import CommunitySummarizer, ConceptStore
 from ragcore.concepts.types import CommunitySummary, Concept
 from ragcore.errors import GenerationError
 from ragcore.graph.claude_extractor import _format_chunks
+
+logger = logging.getLogger("ragcore.concepts.communities")
 
 if TYPE_CHECKING:
     from ragcore.corpus import Corpus
@@ -142,6 +145,7 @@ def detect_communities(
     fingerprint = _run_fingerprint(concepts, edges, resolution, seed, algorithm_version)
 
     if not force and store.community_run_fingerprint() == fingerprint:
+        logger.debug("detect_communities: skipped, graph unchanged (algorithm=%s)", algorithm)
         return CommunityReport(ran=False, community_count=len(store.all_community_ids()), concept_count=len(concepts))
 
     graph = networkx.Graph()
@@ -176,6 +180,10 @@ def detect_communities(
     # here, right after a real reclustering (never on the no-op path above,
     # since nothing could have vanished if the graph didn't change).
     store.prune_orphan_summaries()
+    logger.info(
+        "detect_communities: %s found %d communities over %d concepts",
+        algorithm, len(clusters), len(concepts),
+    )
     return CommunityReport(ran=True, community_count=len(clusters), concept_count=len(concepts))
 
 
@@ -267,7 +275,9 @@ def build_community_summaries(
 
         store.put_community_summary(summary)
         computed += 1
+        logger.debug("build_community_summaries: %s summarized", community_id)
 
+    logger.info("build_community_summaries: %d summaries (re)computed", computed)
     return computed
 
 

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Sequence
 
@@ -34,6 +35,8 @@ from ragcore.concepts.base import ConceptExtractor, ConceptStore
 from ragcore.concepts.resolver import ConceptResolver, EmbeddingConceptResolver, concept_text
 from ragcore.concepts.types import ConceptEdge
 from ragcore.graph.pipeline import _group_by_context_group
+
+logger = logging.getLogger("ragcore.concepts")
 
 if TYPE_CHECKING:
     from ragcore.corpus import Corpus
@@ -132,6 +135,7 @@ def build_concepts(
                 # API call would be a real concurrency hazard.
                 candidate_concepts, candidate_edges = extractor.extract(chapter_chunks)
             except Exception as e:  # noqa: BLE001 - recorded, not raised; one bad chapter shouldn't abort the corpus
+                logger.warning("build_concepts: %s extraction failed: %s", context_group_id, e)
                 errors.append((source.source_id, context_group_id, str(e)))
                 store.mark_chapter_failed(
                     source_id=source.source_id,
@@ -206,9 +210,19 @@ def build_concepts(
 
             concepts_extracted += len(resolved_concepts)
             edges_extracted += len(remapped_edges)
+            logger.debug(
+                "build_concepts: %s -> %d concepts, %d edges",
+                context_group_id, len(resolved_concepts), len(remapped_edges),
+            )
             if on_progress:
                 on_progress(ConceptProgress(source.source_id, context_group_id, "done"))
 
+    logger.info(
+        "build_concepts: done — %d/%d chapters processed (%d skipped, %d failed), "
+        "%d concepts (%d merged), %d edges",
+        chapters_processed, chapters_processed + chapters_skipped + len(errors), chapters_skipped,
+        len(errors), concepts_extracted, concepts_merged, edges_extracted,
+    )
     return ConceptReport(
         chunks_processed=chunks_processed,
         chapters_processed=chapters_processed,

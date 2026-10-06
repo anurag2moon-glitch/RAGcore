@@ -3,12 +3,25 @@
 Orchestration only: ingestion wires Loader -> Chunker -> Embedder -> Store,
 retrieval delegates to a Retriever. No I/O logic of its own beyond calling
 into those components, so swapping any one of them never touches this file.
+
+Logs via the stdlib `logging` module under `logging.getLogger("ragcore.corpus")`
+— docs/ARCHITECTURE.md Phase 6 gap list item 25 ("zero logging calls found
+anywhere in ragcore"). No handler/formatter is configured here or anywhere
+in this library: a library that configured its own handlers would fight a
+consuming application's own logging setup (duplicate output, wrong
+format, wrong destination). A consumer who wants to see these calls
+`logging.getLogger("ragcore").setLevel(...)` and attaches their own
+handler, same as any well-behaved library. Levels used: INFO for a
+completed ingest/retrieve/ask call (one line, the kind of thing worth
+seeing by default); DEBUG for stage-level detail inside one call; WARNING
+for a recovered-from anomaly (e.g. ingest_many retrying a failed file).
 """
 
 from __future__ import annotations
 
 import dataclasses
 import hashlib
+import logging
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Iterable, Sequence
@@ -36,6 +49,8 @@ from ragcore.types import (
     Retrieved,
     SourceInfo,
 )
+
+logger = logging.getLogger("ragcore.corpus")
 
 
 class Corpus:
@@ -114,6 +129,7 @@ class Corpus:
         on_progress: Callable[[IngestProgress], None] | None = None,
     ) -> IngestReport:
         path = Path(path)
+        logger.debug("ingest: starting %s", path)
         loader = self.loaders.get_loader(path)
 
         self._report(on_progress, path, "loading", 0, 0)
@@ -122,6 +138,7 @@ class Corpus:
         self._report(on_progress, path, "chunking", 0, 0)
         groups = self.chunker.chunk(doc)
         total_chunks = sum(len(g.chunks) for g in groups)
+        logger.debug("ingest: %s chunked into %d groups, %d chunks", path, len(groups), total_chunks)
 
         if metadata:
             groups = [
@@ -165,6 +182,7 @@ class Corpus:
         self.store.upsert(chunks)
         self._report(on_progress, path, "done", len(chunks), len(chunks))
 
+        logger.info("ingest: %s done, %d chunks (source_id=%s)", path, len(chunks), doc.source_id)
         return IngestReport(
             source_ids=[doc.source_id],
             chunks_ingested=len(chunks),
@@ -245,6 +263,10 @@ class Corpus:
             self._report(on_progress, path, "storing", chunks_done, total_chunks)
 
         self._report(on_progress, path, "done", chunks_done, total_chunks)
+        logger.info(
+            "ingest: %s done (checkpointed), %d chunks (source_id=%s)",
+            path, chunks_done, doc.source_id,
+        )
         return IngestReport(
             source_ids=[doc.source_id],
             chunks_ingested=chunks_done,
@@ -285,7 +307,14 @@ class Corpus:
                     report = self.ingest(p, metadata=metadata, replace=replace, on_progress=on_progress)
                 except Exception as e:  # noqa: BLE001 - collected, not raised, in best-effort batch ingest
                     if attempts <= max_retries:
+                        logger.warning(
+                            "ingest_many: %s failed (attempt %d/%d), retrying: %s",
+                            p, attempts, max_retries + 1, e,
+                        )
                         continue
+                    logger.warning(
+                        "ingest_many: %s failed after %d attempt(s), giving up: %s", p, attempts, e
+                    )
                     if self.checkpoint_store is not None:
                         self.checkpoint_store.mark_dead_letter(
                             path=str(p), error=str(e), attempts=attempts
@@ -305,6 +334,10 @@ class Corpus:
                 replaced.extend(report.sources_replaced)
                 chunks_ingested += report.chunks_ingested
 
+        logger.info(
+            "ingest_many: %d/%d files ingested, %d chunks, %d failed",
+            len(source_ids), len(paths), chunks_ingested, len(errors),
+        )
         return IngestReport(
             source_ids=source_ids,
             chunks_ingested=chunks_ingested,
@@ -403,6 +436,7 @@ class Corpus:
         results = self.retriever.retrieve(query, k=k, filters=filters)
         if min_score is not None:
             results = [r for r in results if r.score >= min_score]
+        logger.debug("retrieve: query=%r k=%d -> %d results", query, k, len(results))
         return results
 
     def ask(
@@ -424,6 +458,7 @@ class Corpus:
                 "no Generator configured; pass generator=... to ask() or set corpus.generator"
             )
         results = self.retrieve(query, k=k, filters=filters)
+        logger.debug("ask: query=%r -> generating over %d results", query, len(results))
         return gen.generate(query, results)
 
     # -- corpus management -------------------------------------------------

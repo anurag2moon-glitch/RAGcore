@@ -35,6 +35,7 @@ implementations.
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Literal, Sequence
 
@@ -42,6 +43,8 @@ from ragcore.chunking.tokenizer import count_tokens
 from ragcore.embedding.cost import UsageTracker
 from ragcore.errors import EmbeddingError
 from ragcore.types import Vector
+
+logger = logging.getLogger("ragcore.embedding.openai")
 
 try:
     import openai
@@ -192,7 +195,12 @@ class OpenAIEmbedder:
                 last_err = e
                 if attempt == self._max_retries - 1:
                     break
+                logger.warning(
+                    "%s embedding attempt %d/%d failed, retrying: %s",
+                    self.name, attempt + 1, self._max_retries, e,
+                )
                 time.sleep(min(2**attempt, 30))
+        logger.error("%s embedding failed after %d attempts: %s", self.name, self._max_retries, last_err)
         raise EmbeddingError(
             f"{self.name} embedding failed after {self._max_retries} attempts: {last_err}"
         ) from last_err

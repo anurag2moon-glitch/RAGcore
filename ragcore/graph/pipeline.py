@@ -17,12 +17,15 @@ rather than replace).
 from __future__ import annotations
 
 import dataclasses
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Sequence
 
 from ragcore.graph.base import EntityExtractor, GraphStore
 from ragcore.graph.resolver import EmbeddingEntityResolver, EntityResolver
 from ragcore.graph.types import Entity, Relation
+
+logger = logging.getLogger("ragcore.graph")
 
 if TYPE_CHECKING:
     # Deferred to avoid a cycle: ragcore.graph.__init__ imports this module,
@@ -82,7 +85,12 @@ def build_graph(
     for source in sources:
         chunks = corpus.store.get_by_source(source.source_id)
         for chapter_chunks in _group_by_context_group(chunks):
+            context_group_id = chapter_chunks[0].meta.context_group_id
             candidate_entities, candidate_relations = extractor.extract(chapter_chunks)
+            logger.debug(
+                "build_graph: %s extracted %d entities, %d relations from %d chunks",
+                context_group_id, len(candidate_entities), len(candidate_relations), len(chapter_chunks),
+            )
             chunks_processed += len(chapter_chunks)
 
             # Cheap resolution aid: give each candidate a short summary of
@@ -165,6 +173,10 @@ def build_graph(
             store.add_relations(remapped_relations)
             relations_extracted += len(remapped_relations)
 
+    logger.info(
+        "build_graph: done — %d chunks, %d entities (%d merged), %d relations",
+        chunks_processed, entities_extracted, entities_merged, relations_extracted,
+    )
     return GraphReport(
         chunks_processed=chunks_processed,
         entities_extracted=entities_extracted,
