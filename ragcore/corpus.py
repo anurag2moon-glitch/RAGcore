@@ -125,9 +125,15 @@ class Corpus:
         path: str | Path,
         *,
         metadata: dict[str, Any] | None = None,
+        tenant_id: str | None = None,
         replace: bool = True,
         on_progress: Callable[[IngestProgress], None] | None = None,
     ) -> IngestReport:
+        """`tenant_id` (default None, opt-in — see
+        ragcore.types.ChunkMeta.tenant_id and
+        docs/adr/0006-tenant-id-foundation-not-enforcement.md): tags every
+        chunk from this file with it. Leaving it unset keeps every chunk's
+        `tenant_id` at `None` exactly as before this parameter existed."""
         path = Path(path)
         logger.debug("ingest: starting %s", path)
         loader = self.loaders.get_loader(path)
@@ -140,7 +146,7 @@ class Corpus:
         total_chunks = sum(len(g.chunks) for g in groups)
         logger.debug("ingest: %s chunked into %d groups, %d chunks", path, len(groups), total_chunks)
 
-        if metadata:
+        if metadata or tenant_id is not None:
             groups = [
                 ChunkGroup(
                     group_id=g.group_id,
@@ -148,7 +154,9 @@ class Corpus:
                         dataclasses.replace(
                             c,
                             meta=dataclasses.replace(
-                                c.meta, extra={**c.meta.extra, **metadata}
+                                c.meta,
+                                extra={**c.meta.extra, **(metadata or {})},
+                                tenant_id=tenant_id if tenant_id is not None else c.meta.tenant_id,
                             ),
                         )
                         for c in g.chunks
@@ -279,6 +287,7 @@ class Corpus:
         paths: Iterable[str | Path],
         *,
         metadata: dict[str, Any] | None = None,
+        tenant_id: str | None = None,
         replace: bool = True,
         on_progress: Callable[[IngestProgress], None] | None = None,
         max_workers: int = 4,
@@ -304,7 +313,9 @@ class Corpus:
             while True:
                 attempts += 1
                 try:
-                    report = self.ingest(p, metadata=metadata, replace=replace, on_progress=on_progress)
+                    report = self.ingest(
+                        p, metadata=metadata, tenant_id=tenant_id, replace=replace, on_progress=on_progress
+                    )
                 except Exception as e:  # noqa: BLE001 - collected, not raised, in best-effort batch ingest
                     if attempts <= max_retries:
                         logger.warning(

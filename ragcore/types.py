@@ -132,6 +132,23 @@ class ChunkMeta:
     char_end: int
     token_count: int
 
+    # --- multi-tenancy (Phase 7 foundation) ---
+    tenant_id: str | None = None
+    """Opt-in, additive, default `None` (docs/ARCHITECTURE.md Phase 7 gap
+    list: "start with tenant_id propagation through ChunkMeta and every
+    store schema, since every other Phase-7 item (quotas, isolation,
+    metering) depends on that field existing first"). `None` means
+    single-tenant mode — every existing caller that never passes
+    `tenant_id=...` anywhere sees identical behavior to before this field
+    existed; no filter is applied, no isolation is enforced, nothing
+    changes. A caller opting into multi-tenant isolation sets it via
+    `Corpus.ingest(..., tenant_id=...)` and is responsible for passing a
+    matching `filters={"tenant_id": ...}` on every `retrieve()`/`ask()`
+    call — this field makes tenant-scoped filtering *possible* at the
+    storage layer; it does not itself enforce isolation (no hosting-layer
+    guard against a caller forgetting the filter — see
+    docs/adr/0006-tenant-id-foundation-not-enforcement.md)."""
+
     # --- extensibility ---
     extra: dict[str, Any] = field(default_factory=dict)
 

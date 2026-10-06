@@ -69,3 +69,37 @@ def test_filters_restrict_results_by_structure(md_book: Path) -> None:
     assert filtered
     assert all(r.chunk.meta.chapter_index is not None and r.chunk.meta.chapter_index >= 1 for r in filtered)
     assert {r.chunk.chunk_id for r in filtered} <= ch2_ids
+
+
+def test_tenant_id_defaults_to_none_when_not_passed(md_book: Path) -> None:
+    corpus, store = _build_corpus()
+    corpus.ingest(md_book)
+
+    assert all(c.meta.tenant_id is None for c in store.all_chunks())
+
+
+def test_ingest_tenant_id_tags_every_chunk_from_that_file(md_book: Path) -> None:
+    corpus, store = _build_corpus()
+    corpus.ingest(md_book, tenant_id="tenant-a")
+
+    chunks = store.all_chunks()
+    assert chunks
+    assert all(c.meta.tenant_id == "tenant-a" for c in chunks)
+
+
+def test_retrieve_filters_by_tenant_id_isolate_tenants(md_book: Path, tmp_path: Path) -> None:
+    # Distinct content for book_b, not a copy of md_book: source_id is a
+    # content hash (sha256 of file bytes), so two files with identical
+    # bytes collapse to the same source_id and the second ingest()'s
+    # default replace=True would delete the first tenant's chunks.
+    corpus, _store = _build_corpus()
+    book_b = tmp_path / "book_b.md"
+    book_b.write_text(md_book.read_text(encoding="utf-8") + "\n\nExtra unique text for book b.\n", encoding="utf-8")
+
+    corpus.ingest(md_book, tenant_id="tenant-a")
+    corpus.ingest(book_b, tenant_id="tenant-b")
+
+    results = corpus.retrieve("chunking", k=50, filters={"tenant_id": "tenant-a"})
+
+    assert results
+    assert all(r.chunk.meta.tenant_id == "tenant-a" for r in results)

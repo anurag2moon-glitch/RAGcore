@@ -49,6 +49,7 @@ _FILTERABLE_FIELDS = frozenset(
         "chunk_index",
         "context_group_id",
         "token_count",
+        "tenant_id",
     }
 )
 
@@ -77,6 +78,7 @@ def _build_schema(dim: int) -> "pa.Schema":
             pa.field("char_end", pa.int64()),
             pa.field("token_count", pa.int64()),
             pa.field("extra_json", pa.string()),
+            pa.field("tenant_id", pa.string()),
         ]
     )
 
@@ -139,6 +141,7 @@ def _chunk_to_row(chunk: Chunk) -> dict:
         "char_end": m.char_end,
         "token_count": m.token_count,
         "extra_json": json.dumps(m.extra),
+        "tenant_id": m.tenant_id,
     }
 
 
@@ -160,6 +163,7 @@ def _row_to_chunk(row: dict) -> Chunk:
         char_end=row["char_end"],
         token_count=row["token_count"],
         extra=json.loads(row["extra_json"]) if row.get("extra_json") else {},
+        tenant_id=row.get("tenant_id"),
     )
     return Chunk(chunk_id=row["chunk_id"], text=row["text"], meta=meta, vector=row.get("vector"))
 
@@ -188,6 +192,14 @@ class LanceDBStore:
 
         if table_name in self._db.list_tables().tables:
             self._table = self._db.open_table(table_name)
+            # Schema migration for a table created before tenant_id
+            # existed: add_columns() backfills every existing row with
+            # NULL and leaves everything else untouched — confirmed
+            # directly (not assumed), since LanceDB raises a ValueError
+            # on add()/upsert() the moment a row carries a key absent
+            # from an already-open table's schema, which this avoids.
+            if "tenant_id" not in self._table.schema.names:
+                self._table.add_columns({"tenant_id": "CAST(NULL AS STRING)"})
         else:
             self._table = self._db.create_table(table_name, schema=_build_schema(dim))
 
