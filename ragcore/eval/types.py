@@ -91,6 +91,24 @@ class RetrievalMetrics:
     mrr: float
     hit_rate_at_k: float
 
+    latency_p50_ms: float = 0.0
+    latency_p95_ms: float = 0.0
+    latency_p99_ms: float = 0.0
+    """Wall-clock Corpus.retrieve() latency across the question set — real
+    for any run, independent of which Embedder is configured."""
+
+    total_tokens_used: int | None = None
+    """Sum of corpus.embedder.usage.total_tokens consumed by this eval
+    run's own query embeddings, if the configured Embedder exposes a
+    `.usage` (ragcore.embedding.cost.UsageTracker) — None, never a
+    guessed number, when it doesn't (e.g. a test double with no real
+    cost to track). Measured as a before/after delta around the whole
+    run, not attributed per-question: Embedder.embed_query() is one call
+    per question in every default stack, but attributing a shared-batch
+    embedder's usage to individual questions isn't generally well-defined,
+    so this stays a run-level total rather than claiming per-question
+    precision it doesn't have."""
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "k": self.k,
@@ -99,6 +117,10 @@ class RetrievalMetrics:
             "ndcg_at_k": self.ndcg_at_k,
             "mrr": self.mrr,
             "hit_rate_at_k": self.hit_rate_at_k,
+            "latency_p50_ms": self.latency_p50_ms,
+            "latency_p95_ms": self.latency_p95_ms,
+            "latency_p99_ms": self.latency_p99_ms,
+            "total_tokens_used": self.total_tokens_used,
         }
 
 
@@ -124,6 +146,7 @@ class QuestionResult:
     matched_gold_count: int
     gold_count: int
     reciprocal_rank: float
+    latency_ms: float = 0.0
     groundedness: float | None = None
     unsupported_claims: tuple[str, ...] = field(default_factory=tuple)
 
@@ -135,6 +158,7 @@ class QuestionResult:
             "matched_gold_count": self.matched_gold_count,
             "gold_count": self.gold_count,
             "reciprocal_rank": self.reciprocal_rank,
+            "latency_ms": self.latency_ms,
             "groundedness": self.groundedness,
             "unsupported_claims": list(self.unsupported_claims),
         }
@@ -175,6 +199,7 @@ class EvalReport:
                     matched_gold_count=q["matched_gold_count"],
                     gold_count=q["gold_count"],
                     reciprocal_rank=q["reciprocal_rank"],
+                    latency_ms=q.get("latency_ms", 0.0),
                     groundedness=q.get("groundedness"),
                     unsupported_claims=tuple(q.get("unsupported_claims") or ()),
                 )

@@ -36,7 +36,7 @@ def run_eval(
         )
 
     per_question: list[QuestionResult] = []
-    for (question_id, retrieved_ids, relevant), q in zip(raw, questions, strict=True):
+    for (question_id, retrieved_ids, relevant, latency_ms), q in zip(raw, questions, strict=True):
         supported_ratio, unsupported = groundedness_by_question.get(question_id, (None, ()))
         per_question.append(
             QuestionResult(
@@ -46,6 +46,7 @@ def run_eval(
                 matched_gold_count=len(set(retrieved_ids) & relevant),
                 gold_count=len(relevant),
                 reciprocal_rank=reciprocal_rank(retrieved_ids, relevant),
+                latency_ms=latency_ms,
                 groundedness=supported_ratio,
                 unsupported_claims=unsupported,
             )
@@ -66,6 +67,9 @@ def format_report(report: EvalReport) -> str:
         f"n={report.n_questions} k={report.k}",
         f"  recall@k={r.recall_at_k:.3f}  precision@k={r.precision_at_k:.3f}  "
         f"ndcg@k={r.ndcg_at_k:.3f}  mrr={r.mrr:.3f}  hit_rate@k={r.hit_rate_at_k:.3f}",
+        f"  latency: p50={r.latency_p50_ms:.1f}ms  p95={r.latency_p95_ms:.1f}ms  "
+        f"p99={r.latency_p99_ms:.1f}ms"
+        + (f"  tokens={r.total_tokens_used}" if r.total_tokens_used is not None else ""),
     ]
     if report.groundedness is not None:
         g = report.groundedness

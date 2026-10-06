@@ -9,6 +9,7 @@ gold file silently going stale.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from statistics import fmean
 from typing import TYPE_CHECKING, Sequence
@@ -18,6 +19,18 @@ from ragcore.eval.types import GoldPassage, GoldQuestion, RetrievalMetrics
 
 if TYPE_CHECKING:
     from ragcore.corpus import Corpus
+
+
+def _percentile(sorted_values: Sequence[float], p: float) -> float:
+    """Same nearest-rank percentile convention as
+    tests/integration/eval/report.py's identical helper — reimplemented,
+    not imported, since package code must never depend on tests/ (see
+    ragcore.eval.dataset's module docstring for the same rule applied to
+    find_gold_passage)."""
+    if not sorted_values:
+        return 0.0
+    idx = min(len(sorted_values) - 1, int(round(p * (len(sorted_values) - 1))))
+    return sorted_values[idx]
 
 
 def _source_id_for_path(corpus: Corpus, source_path: str) -> str | None:
@@ -55,32 +68,42 @@ def resolve_relevant_chunk_ids(corpus: Corpus, gold_passages: Sequence[GoldPassa
 
 def score_question(
     corpus: Corpus, question: GoldQuestion, *, k: int = 10
-) -> tuple[list[str], set[str]]:
-    """Returns (retrieved_chunk_ids, relevant_chunk_ids) for one question."""
+) -> tuple[list[str], set[str], float]:
+    """Returns (retrieved_chunk_ids, relevant_chunk_ids, latency_ms) for
+    one question."""
+    t0 = time.perf_counter()
     results = corpus.retrieve(question.query, k=k)
+    latency_ms = (time.perf_counter() - t0) * 1000.0
     retrieved_ids = [r.chunk.chunk_id for r in results]
     relevant = resolve_relevant_chunk_ids(corpus, question.gold_passages)
-    return retrieved_ids, relevant
+    return retrieved_ids, relevant, latency_ms
 
 
 def score_retrieval(
     corpus: Corpus, questions: Sequence[GoldQuestion], *, k: int = 10
-) -> tuple[RetrievalMetrics, list[tuple[str, list[str], set[str]]]]:
+) -> tuple[RetrievalMetrics, list[tuple[str, list[str], set[str], float]]]:
     """Aggregate retrieval metrics (mean across questions) plus the raw
-    per-question (question_id, retrieved_ids, relevant_ids) tuples, so
-    ragcore.eval.report.run_eval can build QuestionResults without
-    re-querying the corpus."""
-    recalls, precisions, ndcgs, rrs, hits = [], [], [], [], []
-    raw: list[tuple[str, list[str], set[str]]] = []
+    per-question (question_id, retrieved_ids, relevant_ids, latency_ms)
+    tuples, so ragcore.eval.report.run_eval can build QuestionResults
+    without re-querying the corpus."""
+    recalls, precisions, ndcgs, rrs, hits, latencies = [], [], [], [], [], []
+    raw: list[tuple[str, list[str], set[str], float]] = []
+
+    usage = getattr(corpus.embedder, "usage", None)
+    tokens_before = usage.total_tokens if usage is not None else None
 
     for q in questions:
-        retrieved_ids, relevant = score_question(corpus, q, k=k)
+        retrieved_ids, relevant, latency_ms = score_question(corpus, q, k=k)
         recalls.append(recall_at_k(retrieved_ids, relevant, k))
         precisions.append(precision_at_k(retrieved_ids, relevant, k))
         ndcgs.append(ndcg_at_k(retrieved_ids, relevant, k))
         rrs.append(reciprocal_rank(retrieved_ids, relevant))
         hits.append(hit_rate_at_k(retrieved_ids, relevant, k))
-        raw.append((q.question_id, retrieved_ids, relevant))
+        latencies.append(latency_ms)
+        raw.append((q.question_id, retrieved_ids, relevant, latency_ms))
+
+    total_tokens_used = (usage.total_tokens - tokens_before) if usage is not None else None
+    sorted_latencies = sorted(latencies)
 
     metrics = RetrievalMetrics(
         k=k,
@@ -89,5 +112,9 @@ def score_retrieval(
         ndcg_at_k=fmean(ndcgs) if ndcgs else 0.0,
         mrr=fmean(rrs) if rrs else 0.0,
         hit_rate_at_k=fmean(hits) if hits else 0.0,
+        latency_p50_ms=_percentile(sorted_latencies, 0.50),
+        latency_p95_ms=_percentile(sorted_latencies, 0.95),
+        latency_p99_ms=_percentile(sorted_latencies, 0.99),
+        total_tokens_used=total_tokens_used,
     )
     return metrics, raw
