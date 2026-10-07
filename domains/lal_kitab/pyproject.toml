@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ragcore-lal-kitab"
+version = "0.1.0"
+description = "Lal Kitab astrology domain pack for ragcore.rules (Phase 10 §7). See docs/adr/0013-rule-extraction-domain-pluggable-architecture.md."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+# ragcore[generation] itself is a sibling-package dependency, not
+# declared here — same reasoning as server/'s own pyproject.toml.
+# Install both in one venv with: pip install -e "../..[generation]" -e ".[dev]"
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["lal_kitab"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
