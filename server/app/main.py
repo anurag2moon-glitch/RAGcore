@@ -28,6 +28,7 @@ from app.models import (
     RetrieveResponse,
     SourceResponse,
 )
+from app.rate_limit import enforce_rate_limit
 from ragcore.corpus import Corpus
 from ragcore.errors import RagcoreError, TenancyError
 from ragcore.tenancy import TenantScopedCorpus
@@ -64,7 +65,7 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/ingest", response_model=IngestResponse)
+@app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(enforce_rate_limit)])
 async def ingest(
     file: UploadFile,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
@@ -83,7 +84,7 @@ async def ingest(
     return IngestResponse.from_report(report)
 
 
-@app.post("/retrieve", response_model=RetrieveResponse)
+@app.post("/retrieve", response_model=RetrieveResponse, dependencies=[Depends(enforce_rate_limit)])
 def retrieve(
     req: RetrieveRequest,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
@@ -92,7 +93,7 @@ def retrieve(
     return RetrieveResponse(results=[RetrievedChunkResponse.from_retrieved(r) for r in results])
 
 
-@app.post("/ask", response_model=AskResponse)
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(enforce_rate_limit)])
 def ask(
     req: AskRequest,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
@@ -106,14 +107,14 @@ def ask(
     return AskResponse.from_answer(answer)
 
 
-@app.get("/sources", response_model=list[SourceResponse])
+@app.get("/sources", response_model=list[SourceResponse], dependencies=[Depends(enforce_rate_limit)])
 def list_sources(
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
 ) -> list[SourceResponse]:
     return [SourceResponse.from_source_info(s) for s in corpus.sources()]
 
 
-@app.delete("/sources/{source_id}")
+@app.delete("/sources/{source_id}", dependencies=[Depends(enforce_rate_limit)])
 def delete_source(
     source_id: str,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom

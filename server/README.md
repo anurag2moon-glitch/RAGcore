@@ -9,7 +9,7 @@ multi-tenant HTTP routing (every route scoped through
 and
 [`docs/adr/0012-api-key-auth-and-multi-tenant-routing.md`](../docs/adr/0012-api-key-auth-and-multi-tenant-routing.md)
 in the repo root for the full reasoning and what's deliberately still
-not here (JWT/OAuth, RBAC, rate limiting, usage metering).
+not here (JWT/OAuth, RBAC, usage metering).
 
 ## Setup
 
@@ -42,6 +42,18 @@ rotation, no expiry, plaintext comparison) — implement the
 `ApiKeyStore` Protocol against your own key-issuance backend for a
 real deployment.
 
+### Rate limiting (optional)
+
+```
+export RAGCORE_RATE_LIMIT_PER_MINUTE=60
+```
+
+Token-bucket per key (per tenant_id in multi-tenant mode, else per
+client IP) — a burst up to the configured rate is allowed immediately,
+then refills continuously. Exceeding it returns `429`. `/health` is
+always exempt. Unset means no rate limiting at all, identical to this
+server's behavior before this existed.
+
 Visit `/docs` for the interactive OpenAPI UI (generated automatically
 by FastAPI from `app/main.py`'s routes and `app/models.py`'s Pydantic
 models — no separate authoring step).
@@ -70,4 +82,5 @@ overridden with in-memory test doubles via FastAPI's
 | `DELETE` | `/sources/{source_id}` | — | `403` in multi-tenant mode if the source belongs to another tenant |
 
 Every route except `/health` returns `401` in multi-tenant mode if the
-request has no valid API key.
+request has no valid API key, and `429` if `RAGCORE_RATE_LIMIT_PER_MINUTE`
+is set and exceeded.

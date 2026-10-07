@@ -85,3 +85,12 @@ meaningfully different condition from a generic bad request.
   shared `Corpus` until that design question is resolved — this ADR
   does not change that constraint, only adds enforcement for what
   `TenantScopedCorpus` already covers.
+
+**Follow-up, same day**: `server/app/rate_limit.py` adds the
+remaining straightforward piece of item 30 — a per-key (tenant_id when
+auth is on, else client IP) token-bucket rate limiter, opt-in via
+`RAGCORE_RATE_LIMIT_PER_MINUTE`, applied as a per-route dependency so
+`/health` stays exempt. This didn't warrant its own ADR — a standard
+token bucket keyed by the tenant_id this same ADR's auth layer already
+resolves, no new design fork. JWT/OAuth, RBAC, and billing-ready usage
+metering remain the open parts of item 30.
