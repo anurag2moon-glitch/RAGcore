@@ -340,8 +340,13 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
     vector-retrieval path is enforced by `TenantScopedCorpus` — do
     **not** wire `GraphRetriever`/`ConceptRetriever` onto a
     multi-tenant `TenantScopedCorpus` until Tier 2 is resolved.
-- ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
-  metering ready for billing — none of this exists.
+- 🟡 API keys — ✅ `server/app/auth.py` (`ApiKeyStore` protocol,
+  `InMemoryApiKeyStore` reference implementation, `RAGCORE_API_KEYS`-
+  configured, opt-in and backward compatible — see
+  [ADR 0012](adr/0012-api-key-auth-and-multi-tenant-routing.md)). This
+  is what unlocked real multi-tenant HTTP routing on `server/` (next
+  bullet). JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
+  metering ready for billing — ⬜, still open.
 - ✅ Semantic/result cache with tenant-scoped invalidation —
   `ragcore.caching` (`ResultCache` protocol, `InMemoryResultCache`
   default, `CachingRetriever` decorator). `invalidate(tenant_id=...)` is
@@ -388,9 +393,10 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   `ragcore`'s own — see `docs/adr/0008-api-server-as-sibling-package.md`).
   `GET /health`, `POST /ingest` (real multipart upload), `POST /retrieve`,
   `POST /ask`, `GET /sources`, `DELETE /sources/{source_id}`.
-  Single-tenant, **no auth** — deliberate, not an oversight: see ADR 0008
-  for why multi-tenant HTTP routing isn't attempted until an actual auth
-  mechanism (Phase 7 item 30) exists.
+  Single-tenant and unauthenticated by default; **real multi-tenant
+  auth now exists** — set `RAGCORE_API_KEYS` and every route is scoped
+  through `TenantScopedCorpus` (`401`/`403` wired in) — see
+  `docs/adr/0012-api-key-auth-and-multi-tenant-routing.md`.
 - ✅ **OpenAPI spec** — free once the server above exists; FastAPI
   generates it automatically from the route/model definitions
   (`server/app/main.py`/`server/app/models.py`), visit `/docs`. No
@@ -640,8 +646,9 @@ else (28b, 30+) still from scratch.**
     that don't carry `tenant_id` at all, so wiring either onto a
     multi-tenant `TenantScopedCorpus` today risks real cross-tenant
     leakage, not just a missed filter.
-30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
-    billing-ready usage metering.
+30. 🟡 API keys — ✅ `server/app/auth.py` (commit 707cd52). JWT/OAuth,
+    RBAC, per-tenant quotas, rate limiting, billing-ready usage
+    metering — ⬜, still open.
 31. ✅ Semantic/result cache with tenant-scoped invalidation —
     `ragcore.caching` (commit 9ac827f).
 32. 🟡 Data lifecycle — ✅ hard delete:
@@ -664,8 +671,11 @@ still from scratch.**
 36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
 37. ⬜ Load tests (Locust/k6).
 38. ✅ Backup/restore runbook — `docs/RUNBOOK.md`, commit eff4b1c.
-39. ⬜ Multi-tenant HTTP routing on top of `server/` — gated on Phase 7
-    item 30 (API keys/JWT/RBAC) existing first, per ADR 0008.
+39. ✅ Multi-tenant HTTP routing on top of `server/` — commit 707cd52,
+    `docs/adr/0012-api-key-auth-and-multi-tenant-routing.md`. Every
+    route scoped via `TenantScopedCorpus` once `RAGCORE_API_KEYS` is
+    set; `401`/`403` wired in. JWT/OAuth/RBAC/quotas/rate-limiting
+    (the rest of item 30) remain open.
 
 **Phase 9 (docs): items 40/41 in progress, everything else (42+) open.**
 40. 🟡 ADR backfill for major decisions already made — 3 done
