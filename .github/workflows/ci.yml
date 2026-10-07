@@ -39,9 +39,36 @@ jobs:
       - name: Lint (report only — not a merge gate yet)
         # 141 pre-existing findings as of this workflow's introduction
         # (mostly a repo-wide `collections.abc` import-style preference
-        # ruff would rewrite via --fix) predate this CI pipeline and
-        # aren't this pass's to clean up en masse. Reported for visibility
+        # ruff would rewrite via --fix), grown to ~159 since as new
+        # modules kept matching that same established style (every
+        # module this session added followed the existing convention
+        # deliberately, not a new problem — see each commit's own
+        # before/after lint diff). Still not this pass's backlog to
+        # clean up en masse. Reported for visibility
         # without blocking merges until that backlog is actually addressed
         # — flip continue-on-error to false once it's clean.
         run: ruff check .
         continue-on-error: true
+
+  test-server:
+    # server/ is a separate sibling package (docs/adr/0008) with its own
+    # dependencies (fastapi, ...) not installed by the job above —
+    # ragcore's own pyproject.toml testpaths now excludes server/tests/
+    # from that job's run, so this is the only place server/'s suite
+    # actually runs in CI.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ragcore, then the server package with dev tooling
+        run: |
+          pip install -e .
+          pip install -e "server[dev]"
+
+      - name: Run the server test suite
+        working-directory: server
+        run: python -m pytest -q

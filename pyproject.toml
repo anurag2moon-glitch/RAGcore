@@ -51,6 +51,12 @@ dev = ["pytest>=8", "pytest-cov>=5", "moto[s3]>=5"]
 packages = ["ragcore"]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+# server/ is a separate sibling package (its own pyproject.toml, own
+# venv, own test suite — docs/adr/0008-api-server-as-sibling-package.md)
+# with dependencies (fastapi, ...) not installed in this repo's own
+# venv; without this, a bare `pytest` from the repo root tries to
+# collect server/tests/ too and fails on missing imports.
 markers = [
     "live: hits real external services (network, API keys required); excluded by default",
     "integration: production-scale integration suite (tests/integration) - no network, real components, deterministic mock embedder/extractor",
