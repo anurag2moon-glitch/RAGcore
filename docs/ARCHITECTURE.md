@@ -66,7 +66,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `eval/` | General-purpose retrieval/groundedness eval harness for a *consumer's* corpus | `run_eval()`, `GoldQuestion` JSONL format, recall/precision/nDCG/MRR/latency/tokens + optional groundedness, `ClaudeGoldSetGenerator` (synthetic QA from a real book) | `test_eval_*.py` (5 files); distinct from `tests/integration/eval/`, ragcore's own internal regression harness, now wired into `.github/workflows/ci.yml` on every push/PR |
 | `versioning/` | Incremental re-ingest (diff/sync), snapshots, rollback | `IngestionManifest`, `plan_sync`/`sync_corpus`, `LanceDBStore.snapshot()`, SQLite online-backup | `test_ingestion_manifest.py`, `test_sync_corpus.py`, `test_snapshot_rollback.py` |
 | `reranking/` | Cross-encoder rerank scoring | `VoyageReranker` (reuses Voyage API, zero new dep) | `test_voyage_reranker.py`, `test_cross_encoder.py` |
-| `tenancy/` | Phase 7 multi-tenancy enforcement on top of `ChunkMeta.tenant_id` | `TenantScopedCorpus` (wraps one `Corpus` + fixed `tenant_id`, forces it on every call, raises `TenancyError` on conflict); vector-store path only — see `docs/adr/0006` | `test_tenancy.py` |
+| `tenancy/` | Phase 7 multi-tenancy enforcement on top of `ChunkMeta.tenant_id` | `TenantScopedCorpus` (wraps one `Corpus` + fixed `tenant_id`, forces it on every call, raises `TenancyError` on conflict; vector-store path only — see `docs/adr/0006`), `hard_delete()` (per-tenant wipe across the vector store + optional auxiliary stores, safe for Tier 2 stores too — see `docs/adr/0007`) | `test_tenancy.py` |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -306,10 +306,14 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
 - ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
   metering ready for billing — none of this exists.
 - ⬜ Semantic/result cache with tenant-scoped invalidation — doesn't exist.
-- ⬜ Data lifecycle: export, hard delete (vectors + graph + files, all
-  stores, one tenant), retention policy — beyond `Corpus.remove(source_id)`
-  and `sync_corpus`'s per-source prune logic, neither of which is a
-  per-tenant operation today.
+- 🟡 Data lifecycle — ✅ hard delete:
+  `TenantScopedCorpus.hard_delete()` wipes one tenant's chunks from the
+  vector store plus every row derived from them in whichever optional
+  auxiliary stores (graph/concept/claim/context/hierarchy/lexical) a
+  caller passes, reusing each store's own existing `remove_source()`
+  unchanged — safe even for the Tier 2 stores, proven by a test
+  simulating two tenants sharing one content-addressed entity id (see
+  commit 38e1b01). Export and retention policy — ⬜, not attempted.
 - ⬜ Encryption at rest/in transit config, audit logs, PII detection,
   prompt-injection defenses for ingested content, copyright/licensing
   flag per document — none of this exists.
@@ -513,8 +517,10 @@ Postgres-against-a-live-server verification remain as real, open work.**
 30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
     billing-ready usage metering.
 31. ⬜ Semantic/result cache with tenant-scoped invalidation.
-32. ⬜ Data lifecycle: per-tenant export, hard delete across every store,
-    retention policy.
+32. 🟡 Data lifecycle — ✅ hard delete:
+    `TenantScopedCorpus.hard_delete()` (commit 38e1b01), proven safe
+    against the exact Tier 2 shared-id danger item 28b names. Per-tenant
+    export, retention policy — ⬜, still open.
 33. ⬜ Encryption at rest/in transit, audit logs, PII detection,
     prompt-injection defenses, per-document licensing flag.
 
