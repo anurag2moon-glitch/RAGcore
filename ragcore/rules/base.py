@@ -51,11 +51,15 @@ class VerificationResult:
 class RuleCandidateDetector(Protocol):
     """Pass 1: a cheap filter — does this chunk contain candidate
     rule-like statements at all — before the more expensive structured
-    extraction pass runs on it."""
+    extraction pass runs on it. Takes `domain_pack` (unlike a generic
+    "does this look like a rule" filter would need to) because what
+    counts as a candidate is itself domain-specific — a Lal Kitab
+    detector should be looking for planet/house/effect language, not
+    an domain-blind notion of "rule-like"."""
 
     model: str
 
-    def detect(self, chunks: Sequence[Chunk]) -> list[CandidateSpan]: ...
+    def detect(self, chunks: Sequence[Chunk], *, domain_pack: DomainPack) -> list[CandidateSpan]: ...
 
 
 @runtime_checkable
@@ -82,7 +86,7 @@ class RuleVerifier(Protocol):
 
     model: str
 
-    def verify(self, rules: Sequence[Rule]) -> list[VerificationResult]: ...
+    def verify(self, rules: Sequence[Rule], *, domain_pack: DomainPack) -> list[VerificationResult]: ...
 
 
 @runtime_checkable

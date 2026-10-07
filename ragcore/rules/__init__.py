@@ -17,8 +17,19 @@ from ragcore.rules.base import (
     RuleVerifier,
     VerificationResult,
 )
+from ragcore.rules.claude import (
+    ClaudeRuleCandidateDetector,
+    ClaudeRuleExtractor,
+    ClaudeRuleVerifier,
+)
 from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
 from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
+from ragcore.rules.ocr_quality import is_low_quality_ocr
+from ragcore.rules.pipeline import (
+    RuleExtractionProgress,
+    RuleExtractionReport,
+    build_rules,
+)
 from ragcore.rules.sqlite_store import SqliteRuleStore
 from ragcore.rules.types import (
     ConditionGroup,
@@ -33,6 +44,9 @@ from ragcore.rules.types import (
 
 __all__ = [
     "CandidateSpan",
+    "ClaudeRuleCandidateDetector",
+    "ClaudeRuleExtractor",
+    "ClaudeRuleVerifier",
     "ConditionGroup",
     "DomainPack",
     "Effect",
@@ -43,13 +57,17 @@ __all__ = [
     "ReviewStatus",
     "Rule",
     "RuleCandidateDetector",
+    "RuleExtractionProgress",
+    "RuleExtractionReport",
     "RuleExtractor",
     "RuleStore",
     "RuleType",
     "RuleVerifier",
     "SqliteRuleStore",
     "VerificationResult",
+    "build_rules",
     "evaluate_condition",
+    "is_low_quality_ocr",
     "match_rules",
     "rule_content_hash",
     "validate_facts",
