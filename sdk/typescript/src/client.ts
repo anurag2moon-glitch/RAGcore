@@ -16,9 +16,15 @@ import { RagcoreClientError } from "./errors.js";
 import type {
   AskOptions,
   AskResult,
+  EditRuleOptions,
+  ExtractRulesResult,
   IngestResult,
+  MatchedRuleInfo,
+  MatchRulesOptions,
+  MatchRulesResult,
   RetrievedChunk,
   RetrieveOptions,
+  RuleInfo,
   SourceInfo,
 } from "./types.js";
 
@@ -33,6 +39,29 @@ function chunkFromJson(d: any): RetrievedChunk {
     tenantId: d.tenant_id ?? null,
     licenseId: d.license_id ?? null,
   };
+}
+
+function ruleFromJson(d: any): RuleInfo {
+  return {
+    ruleId: d.rule_id,
+    domain: d.domain,
+    bookId: d.book_id,
+    chapter: d.chapter ?? null,
+    pageStart: d.page_start,
+    verbatimSpan: d.verbatim_span,
+    normalizedStatement: d.normalized_statement,
+    conditions: d.conditions,
+    effect: d.effect,
+    remedy: d.remedy ?? null,
+    ruleType: d.rule_type,
+    confidence: d.confidence,
+    reviewStatus: d.review_status,
+    version: d.version,
+  };
+}
+
+function matchedRuleFromJson(d: any): MatchedRuleInfo {
+  return { rule: ruleFromJson(d.rule), isOverridden: d.is_overridden, overrides: d.overrides };
 }
 
 export class RagcoreClient {
@@ -112,5 +141,84 @@ export class RagcoreClient {
   async deleteSource(sourceId: string): Promise<number> {
     const body = await this.request("DELETE", `/sources/${encodeURIComponent(sourceId)}`);
     return body.chunks_deleted;
+  }
+
+  // -- Phase 10: rules (server/app/rules_routes.py) --------------------
+
+  async listRules(domain: string, bookId?: string): Promise<RuleInfo[]> {
+    const params = new URLSearchParams({ domain });
+    if (bookId !== undefined) params.set("book_id", bookId);
+    const body = await this.request("GET", `/rules?${params.toString()}`);
+    return body.map(ruleFromJson);
+  }
+
+  async matchRules(
+    domain: string,
+    facts: Record<string, unknown>,
+    options: MatchRulesOptions = {},
+  ): Promise<MatchRulesResult> {
+    const body = await this.request("POST", "/rules/match", {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        domain,
+        facts,
+        book_id: options.bookId ?? null,
+        include_unverified: options.includeUnverified ?? false,
+      }),
+    });
+    return {
+      matched: body.matched.map(matchedRuleFromJson),
+      effective: body.effective.map(ruleFromJson),
+    };
+  }
+
+  async approveRule(ruleId: string, reviewer: string, reason = ""): Promise<RuleInfo> {
+    const body = await this.request("POST", `/rules/${encodeURIComponent(ruleId)}/approve`, {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewer, reason }),
+    });
+    return ruleFromJson(body);
+  }
+
+  async rejectRule(ruleId: string, reviewer: string, reason: string): Promise<RuleInfo> {
+    const body = await this.request("POST", `/rules/${encodeURIComponent(ruleId)}/reject`, {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewer, reason }),
+    });
+    return ruleFromJson(body);
+  }
+
+  async editRule(
+    ruleId: string,
+    reviewer: string,
+    reason: string,
+    options: EditRuleOptions = {},
+  ): Promise<RuleInfo> {
+    const body = await this.request("POST", `/rules/${encodeURIComponent(ruleId)}/edit`, {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reviewer,
+        reason,
+        effect: options.effect ?? null,
+        confidence: options.confidence ?? null,
+        remedy: options.remedy ?? null,
+      }),
+    });
+    return ruleFromJson(body);
+  }
+
+  async extractRules(domain: string, sourceId?: string): Promise<ExtractRulesResult> {
+    const params = new URLSearchParams({ domain });
+    if (sourceId !== undefined) params.set("source_id", sourceId);
+    const body = await this.request("POST", `/rules/extract?${params.toString()}`);
+    return {
+      chaptersProcessed: body.chapters_processed,
+      chaptersSkipped: body.chapters_skipped,
+      candidatesDetected: body.candidates_detected,
+      rulesExtracted: body.rules_extracted,
+      rulesStored: body.rules_stored,
+      rulesRejectedUnsupported: body.rules_rejected_unsupported,
+      errors: body.errors,
+    };
   }
 }

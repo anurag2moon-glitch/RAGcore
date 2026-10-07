@@ -140,3 +140,67 @@ describe("RagcoreClient against a real server (with a generator)", () => {
     expect(result.citations.length).toBeGreaterThan(0);
   });
 });
+
+describe("RagcoreClient rule methods against a real server", () => {
+  let serverProcess: ChildProcessWithoutNullStreams;
+  let client: RagcoreClient;
+
+  beforeAll(async () => {
+    serverProcess = await spawnServer(["--with-sample-rules"]);
+    client = new RagcoreClient(BASE_URL);
+  }, 15000);
+
+  afterAll(async () => {
+    await stopServer(serverProcess);
+  });
+
+  it("lists rules for a domain", async () => {
+    const rules = await client.listRules("test");
+    expect(rules.map((r) => r.ruleId).sort()).toEqual([
+      "rule:sample_pending",
+      "rule:sample_verified",
+    ]);
+  });
+
+  it("matches rules against a fact set, excluding unverified by default", async () => {
+    const result = await client.matchRules("test", { "planet.mars.house": 8 });
+    expect(result.matched.map((m) => m.rule.ruleId)).toEqual(["rule:sample_verified"]);
+    expect(result.effective.map((r) => r.ruleId)).toEqual(["rule:sample_verified"]);
+  });
+
+  it("includes unverified rules when asked", async () => {
+    const result = await client.matchRules(
+      "test",
+      { "planet.mars.house": 8 },
+      { includeUnverified: true },
+    );
+    expect(result.matched.map((m) => m.rule.ruleId).sort()).toEqual([
+      "rule:sample_pending",
+      "rule:sample_verified",
+    ]);
+  });
+
+  it("approves a pending rule", async () => {
+    const approved = await client.approveRule("rule:sample_pending", "alice", "looks right");
+    expect(approved.reviewStatus).toBe("verified");
+  });
+
+  it("edits a rule, creating a new version", async () => {
+    const edited = await client.editRule("rule:sample_verified", "carol", "bump confidence", {
+      confidence: 0.99,
+    });
+    expect(edited.ruleId).not.toBe("rule:sample_verified");
+    expect(edited.confidence).toBe(0.99);
+    expect(edited.version).toBe(2);
+  });
+
+  it("raises RagcoreClientError for an unknown rule", async () => {
+    try {
+      await client.approveRule("rule:nonexistent", "alice");
+      expect.unreachable("expected approveRule() to throw");
+    } catch (err) {
+      expect(err).toBeInstanceOf(RagcoreClientError);
+      expect((err as RagcoreClientError).statusCode).toBe(404);
+    }
+  });
+});

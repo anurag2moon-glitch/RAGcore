@@ -45,3 +45,55 @@ export interface AskOptions {
   k?: number;
   filters?: Record<string, unknown>;
 }
+
+/** Mirrors server/app/rules_models.py's RuleResponse — a projection of
+ * ragcore.rules.types.Rule, not a 1:1 mirror, same philosophy as every
+ * other type in this file. */
+export interface RuleInfo {
+  ruleId: string;
+  domain: string;
+  bookId: string;
+  chapter: string | null;
+  pageStart: number;
+  verbatimSpan: string;
+  normalizedStatement: string;
+  conditions: Record<string, unknown>;
+  effect: Record<string, unknown>;
+  remedy: Record<string, unknown> | null;
+  ruleType: string;
+  confidence: number;
+  reviewStatus: string;
+  version: number;
+}
+
+export interface MatchedRuleInfo {
+  rule: RuleInfo;
+  isOverridden: boolean;
+  overrides: string[];
+}
+
+export interface MatchRulesResult {
+  matched: MatchedRuleInfo[];
+  effective: RuleInfo[];
+}
+
+export interface MatchRulesOptions {
+  bookId?: string;
+  includeUnverified?: boolean;
+}
+
+export interface EditRuleOptions {
+  effect?: Record<string, unknown>;
+  confidence?: number;
+  remedy?: Record<string, unknown>;
+}
+
+export interface ExtractRulesResult {
+  chaptersProcessed: number;
+  chaptersSkipped: number;
+  candidatesDetected: number;
+  rulesExtracted: number;
+  rulesStored: number;
+  rulesRejectedUnsupported: number;
+  errors: [string, string, string][];
+}

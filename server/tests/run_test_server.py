@@ -19,9 +19,12 @@ import sys
 import uvicorn
 from app.corpus_provider import get_corpus
 from app.main import app
+from app.rules_provider import get_rule_store
 from fakes import FakeEmbedder, FakeGenerator, InMemoryStore
 
 from ragcore.corpus import Corpus
+from ragcore.rules.sqlite_store import SqliteRuleStore
+from ragcore.rules.types import Effect, FactPredicate, Rule
 
 
 class _ReadyLoggingServer(uvicorn.Server):
@@ -30,14 +33,35 @@ class _ReadyLoggingServer(uvicorn.Server):
         print("READY", flush=True)
 
 
+def _sample_rule(rule_id: str, *, review_status: str = "verified") -> Rule:
+    return Rule(
+        rule_id=rule_id, domain="test", pack_id="p", pack_version="1", book_id="b1",
+        page_start=1, chunk_ids=("c1",), verbatim_span="Mars in the 8th house causes trouble.",
+        language="en", normalized_statement="n",
+        conditions=FactPredicate(fact="planet.mars.house", operator="eq", value=8),
+        effect=Effect(category="health", polarity="negative"), rule_type="HARD",
+        confidence=0.9, extraction_model="m", extraction_version="v1", created_at="now",
+        review_status=review_status,
+    )
+
+
 def main() -> None:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     with_generator = "--with-generator" in sys.argv
+    with_sample_rules = "--with-sample-rules" in sys.argv
 
     corpus = Corpus(
         InMemoryStore(), FakeEmbedder(), generator=FakeGenerator() if with_generator else None
     )
     app.dependency_overrides[get_corpus] = lambda: corpus
+
+    rule_store = SqliteRuleStore(":memory:")
+    if with_sample_rules:
+        rule_store.add_rules([
+            _sample_rule("rule:sample_verified"),
+            _sample_rule("rule:sample_pending", review_status="auto"),
+        ])
+    app.dependency_overrides[get_rule_store] = lambda: rule_store
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     _ReadyLoggingServer(config).run()
