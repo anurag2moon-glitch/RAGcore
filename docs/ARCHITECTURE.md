@@ -68,6 +68,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `reranking/` | Cross-encoder rerank scoring | `VoyageReranker` (reuses Voyage API, zero new dep) | `test_voyage_reranker.py`, `test_cross_encoder.py` |
 | `tenancy/` | Phase 7 multi-tenancy enforcement on top of `ChunkMeta.tenant_id` | `TenantScopedCorpus` (wraps one `Corpus` + fixed `tenant_id`, forces it on every call, raises `TenancyError` on conflict; vector-store path only — see `docs/adr/0006`), `hard_delete()` (per-tenant wipe across the vector store + optional auxiliary stores, safe for Tier 2 stores too — see `docs/adr/0007`) | `test_tenancy.py` |
 | `privacy/` | Phase 7 PII detection — opt-in scan over an already-ingested `Corpus` | `PiiDetector` protocol, `RegexPiiDetector` (email/phone/SSN/credit-card, Luhn-checked, zero new dep), `scan_corpus()` | `test_privacy_regex_detector.py`, `test_privacy_pipeline.py` |
+| `injection/` | Phase 7 prompt-injection defenses — ingestion-time audit + generation-time guard | `InjectionDetector` protocol, `RegexInjectionDetector` (5 common phrasings), `scan_corpus()`, `GuardedGenerator` (`Generator` decorator, `flag`/`exclude` modes, never rewrites `Chunk.text`) | `test_injection_regex_detector.py`, `test_injection_pipeline.py`, `test_injection_guard.py` |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -341,11 +342,21 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
 - 🟡 PII detection — ✅ `ragcore.privacy` (`PiiDetector` protocol,
   `RegexPiiDetector` default: email/phone/SSN/credit-card, Luhn-checked;
   `scan_corpus()`, a standalone pass over an already-ingested `Corpus`,
-  same shape as `run_eval()`/every `build_*()` pass). Encryption at
-  rest/in transit config, audit logs, prompt-injection defenses for
-  ingested content, copyright/licensing flag per document — ⬜, none of
-  this exists yet; most need an actual request/server context (Phase 8)
-  this library doesn't have.
+  same shape as `run_eval()`/every `build_*()` pass).
+- 🟡 Prompt-injection defenses — ✅ `ragcore.injection` (`InjectionDetector`
+  protocol, `RegexInjectionDetector` default: 5 common phrasings —
+  ignore/disregard-instructions, role-override, reveal-system-prompt,
+  end-of-context markers; `scan_corpus()` for ingestion-time audit;
+  `GuardedGenerator`, a `Generator` decorator screening retrieved
+  context before generation — `mode="flag"` stamps
+  `extra["injection_flagged"]` without touching `Chunk.text`,
+  `mode="exclude"` drops a flagged chunk from context entirely rather
+  than editing it, since silently rewriting it would leave the
+  Generator-visible text and a `Corpus.get(chunk_id)` citation lookup
+  inconsistent).
+- ⬜ Encryption at rest/in transit config, audit logs, copyright/
+  licensing flag per document — none of this exists yet; most need an
+  actual request/server context (Phase 8) this library doesn't have.
 
 ### Phase 8 — API, SDKs, deployment
 ⬜ **Entirely absent.** No FastAPI/any HTTP server, no OpenAPI spec, no
@@ -559,9 +570,10 @@ else (28b, 30+) still from scratch.**
     `TenantScopedCorpus.hard_delete()` (commit 38e1b01), proven safe
     against the exact Tier 2 shared-id danger item 28b names. Per-tenant
     export, retention policy — ⬜, still open.
-33. 🟡 PII detection — ✅ `ragcore.privacy` (commit c85387a). Encryption
-    at rest/in transit, audit logs, prompt-injection defenses,
-    per-document licensing flag — ⬜, still open.
+33. 🟡 PII detection — ✅ `ragcore.privacy` (commit c85387a).
+    Prompt-injection defenses — ✅ `ragcore.injection` (commit f7a7c68).
+    Encryption at rest/in transit, audit logs, per-document licensing
+    flag — ⬜, still open.
 
 **Phase 8 (API/SDK/deployment):** everything, from scratch, after Phase 7's
 tenancy model is settled (an API surface built before tenant_id exists would
