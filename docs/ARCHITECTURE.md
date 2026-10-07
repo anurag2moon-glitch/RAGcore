@@ -388,9 +388,14 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   (`server/app/main.py`/`server/app/models.py`), visit `/docs`. No
   separate authoring pass was needed — the gap list named this as if it
   were independent work, it isn't.
-- ⬜ gRPC, generated Python/TypeScript SDKs, MCP server, Docker/Helm/k8s
-  manifests, Redis, feature flags, load tests (Locust/k6) — none of this
-  exists yet.
+- ✅ **Python SDK** — `sdk/python/` (`ragcore_client.RagcoreClient`, a
+  thin typed `httpx` wrapper over the server's endpoints; constructor-
+  injectable `http_client`, same discipline as every other swappable
+  component here). Tested against the real `server/` app in-process via
+  FastAPI's `TestClient`.
+- ⬜ gRPC, a TypeScript SDK, MCP server, Docker/Helm/k8s manifests,
+  Redis, feature flags, load tests (Locust/k6) — none of this exists
+  yet.
 - 🟡 Backup/restore runbook — the *mechanism* exists per-store
   (`backup_to`/`restore_from_backup`/snapshot/restore, Phase 1/`versioning/`)
   and the server above gives a real process to restart against a restored
@@ -609,11 +614,12 @@ else (28b, 30+) still from scratch.**
     709b9d4). Encryption at rest/in transit, audit logs — ⬜, still
     open; both need a real request/server context (Phase 8).
 
-**Phase 8 (API/SDK/deployment): item 34 done, everything else (35+)
+**Phase 8 (API/SDK/deployment): items 34/35 done, everything else (36+)
 still from scratch.**
 34. ✅ Reference FastAPI server (`server/`) + its free OpenAPI spec —
     commit 41b0bec. See `docs/adr/0008-api-server-as-sibling-package.md`.
-35. ⬜ gRPC, generated Python/TypeScript SDKs, MCP server.
+35. 🟡 Python SDK (`sdk/python/`, commit faaeccd) — ✅. TypeScript SDK,
+    gRPC, MCP server — ⬜, still open.
 36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
 37. ⬜ Load tests (Locust/k6).
 38. ⬜ Backup/restore runbook (the mechanism already exists per-store;
