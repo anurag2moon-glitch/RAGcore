@@ -105,5 +105,18 @@ docstring rather than left for a reader to discover. Request-count
 metering is still genuinely useful (pay-per-request tiers, abuse
 detection) and composes with the real token-cost tracking that already
 exists (`ragcore.embedding.cost.UsageTracker`) if a future redesign
-gives each tenant its own embedder instance. JWT/OAuth, RBAC, and
-per-tenant quotas remain the open parts of item 30.
+gives each tenant its own embedder instance.
+
+**Follow-up, same day**: `server/app/quota.py` adds per-tenant quotas
+(`RAGCORE_TENANT_QUOTAS`), the last tractable piece of item 30 this
+pass tackles. Deliberately a **lifetime total** cap, not a recurring
+period-based (daily/monthly) quota — a real period quota needs time-
+windowing this reference in-memory implementation doesn't build,
+stated plainly in `app/quota.py`'s own docstring rather than silently
+claimed. Reuses `app.usage.InMemoryUsageMeter`'s counts directly
+rather than tracking a separate total, so quota enforcement and
+`GET /usage` can never disagree about how much a tenant has used. The
+quota check runs before `record_usage` in each route's dependency
+list specifically so a rejected request is never counted — verified by
+a dedicated test, not assumed from the ordering alone. JWT/OAuth and
+RBAC remain the open parts of item 30.

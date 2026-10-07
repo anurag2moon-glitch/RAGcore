@@ -28,6 +28,7 @@ from app.models import (
     RetrieveResponse,
     SourceResponse,
 )
+from app.quota import enforce_quota
 from app.rate_limit import enforce_rate_limit
 from app.usage import get_my_usage, record_usage
 from ragcore.corpus import Corpus
@@ -66,7 +67,7 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(enforce_rate_limit), Depends(record_usage)])
+@app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])
 async def ingest(
     file: UploadFile,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
@@ -85,7 +86,7 @@ async def ingest(
     return IngestResponse.from_report(report)
 
 
-@app.post("/retrieve", response_model=RetrieveResponse, dependencies=[Depends(enforce_rate_limit), Depends(record_usage)])
+@app.post("/retrieve", response_model=RetrieveResponse, dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])
 def retrieve(
     req: RetrieveRequest,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
@@ -94,7 +95,7 @@ def retrieve(
     return RetrieveResponse(results=[RetrievedChunkResponse.from_retrieved(r) for r in results])
 
 
-@app.post("/ask", response_model=AskResponse, dependencies=[Depends(enforce_rate_limit), Depends(record_usage)])
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])
 def ask(
     req: AskRequest,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
@@ -108,14 +109,14 @@ def ask(
     return AskResponse.from_answer(answer)
 
 
-@app.get("/sources", response_model=list[SourceResponse], dependencies=[Depends(enforce_rate_limit), Depends(record_usage)])
+@app.get("/sources", response_model=list[SourceResponse], dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])
 def list_sources(
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
 ) -> list[SourceResponse]:
     return [SourceResponse.from_source_info(s) for s in corpus.sources()]
 
 
-@app.delete("/sources/{source_id}", dependencies=[Depends(enforce_rate_limit), Depends(record_usage)])
+@app.delete("/sources/{source_id}", dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])
 def delete_source(
     source_id: str,
     corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom

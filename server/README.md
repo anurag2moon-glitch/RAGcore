@@ -9,8 +9,7 @@ multi-tenant HTTP routing (every route scoped through
 and
 [`docs/adr/0012-api-key-auth-and-multi-tenant-routing.md`](../docs/adr/0012-api-key-auth-and-multi-tenant-routing.md)
 in the repo root for the full reasoning and what's deliberately still
-not here (JWT/OAuth, RBAC, per-tenant quotas, billing-ready token-cost
-metering).
+not here (JWT/OAuth, RBAC, billing-ready token-cost metering).
 
 ## Setup
 
@@ -71,6 +70,20 @@ tenant_id to meter by). `app.usage.InMemoryUsageMeter` is a reference
 implementation (per-process, resets on restart) — persist this for a
 real deployment.
 
+### Per-tenant quotas (optional)
+
+```
+export RAGCORE_TENANT_QUOTAS="tenant-a:1000,tenant-b:5000"
+```
+
+A **lifetime total** request cap per tenant (not a recurring
+daily/monthly quota — that needs real time-windowing this reference
+implementation doesn't build; see `app/quota.py`'s own docstring),
+reusing `/usage`'s own counts so the two can never disagree. A tenant
+with no entry is unlimited. Exceeding it returns `402`; the rejected
+request is never counted (checked before `app.usage.record_usage`
+runs). Unset means no quota enforcement at all.
+
 Visit `/docs` for the interactive OpenAPI UI (generated automatically
 by FastAPI from `app/main.py`'s routes and `app/models.py`'s Pydantic
 models — no separate authoring step).
@@ -101,4 +114,6 @@ overridden with in-memory test doubles via FastAPI's
 
 Every route except `/health` returns `401` in multi-tenant mode if the
 request has no valid API key, and (except `/usage` itself) `429` if
-`RAGCORE_RATE_LIMIT_PER_MINUTE` is set and exceeded.
+`RAGCORE_RATE_LIMIT_PER_MINUTE` is set and exceeded, or `402` if
+`RAGCORE_TENANT_QUOTAS` is set and this tenant's lifetime quota is
+used up.
