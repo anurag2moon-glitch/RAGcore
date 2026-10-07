@@ -15,7 +15,8 @@ from typing import Protocol, Sequence, runtime_checkable
 
 from ragcore.rules.consistency import RuleConflict
 from ragcore.rules.domain import DomainPack
-from ragcore.rules.types import Rule
+from ragcore.rules.review import ReviewAuditEntry
+from ragcore.rules.types import ReviewStatus, Rule
 from ragcore.types import Chunk
 
 
@@ -132,6 +133,31 @@ class RuleStore(Protocol):
 
     def conflicts_for_rule(self, rule_id: str) -> list[RuleConflict]:
         """Every conflict touching this rule, in either position."""
+        ...
+
+    def set_review_status(
+        self, rule_id: str, review_status: ReviewStatus, *, reviewer: str, reason: str
+    ) -> Rule:
+        """In-place mutation of `review_status` only — see
+        `ragcore.rules.review`'s own module docstring for why this is
+        a deliberate, narrow exception to the immutable-version-on-edit
+        discipline rather than a `supersede` call — plus one
+        `ReviewAuditEntry`, both written in one transaction. Returns
+        the rule with its updated status."""
+        ...
+
+    def record_edit(
+        self, old_rule_id: str, new_rule: Rule, *, reviewer: str, reason: str
+    ) -> None:
+        """`supersede(old_rule_id, new_rule)` plus one `ReviewAuditEntry`
+        recording the edit, in one transaction — never left
+        inconsistent by a crash between the two."""
+        ...
+
+    def audit_log_for_rule(self, rule_id: str) -> list[ReviewAuditEntry]:
+        """Every audit entry naming this rule_id either as the rule
+        acted upon, or (for an "edited" entry) as the resulting new
+        version — oldest first."""
         ...
 
     def checkpoint(self, source_id: str, context_group_id: str) -> str | None: ...

@@ -235,6 +235,41 @@ def test_put_conflicts_with_an_empty_sequence_is_a_no_op() -> None:
     assert store.conflicts_for_rule("anything") == []
 
 
+# -- review workflow (direct store-level checks; ReviewQueue's own test
+# suite covers the orchestration-level behavior built on top of these) --
+
+
+def test_set_review_status_rejects_an_unsupported_target_status() -> None:
+    store = SqliteRuleStore(":memory:")
+    store.add_rules([_rule()])
+    rule_id = store.rules_for_book("book1")[0].rule_id
+
+    with pytest.raises(RagcoreError, match="verified.*rejected"):
+        store.set_review_status(rule_id, "auto", reviewer="x", reason="y")
+
+
+def test_set_review_status_on_an_unknown_rule_raises() -> None:
+    store = SqliteRuleStore(":memory:")
+    with pytest.raises(RagcoreError, match="no rule found"):
+        store.set_review_status("rule:nonexistent", "verified", reviewer="x", reason="y")
+
+
+def test_record_edit_is_atomic_with_the_audit_entry() -> None:
+    """A record_edit call either writes both the new version and its
+    audit entry, or neither - checked here by forcing supersede's own
+    validation to fail partway through and confirming no audit entry
+    was left behind."""
+    store = SqliteRuleStore(":memory:")
+    store.add_rules([_rule()])
+    rule_id = store.rules_for_book("book1")[0].rule_id
+    bad_new_rule = _rule(span="different", version=2, supersedes="wrong_id")
+
+    with pytest.raises(RagcoreError):
+        store.record_edit(rule_id, bad_new_rule, reviewer="x", reason="y")
+
+    assert store.audit_log_for_rule(rule_id) == []
+
+
 # -- backup/restore --------------------------------------------------------
 
 

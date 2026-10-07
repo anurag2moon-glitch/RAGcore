@@ -24,7 +24,8 @@ from typing import Sequence
 
 from ragcore.errors import RagcoreError, wrap_backend_errors
 from ragcore.rules.consistency import RuleConflict
-from ragcore.rules.types import Rule
+from ragcore.rules.review import ReviewAuditEntry
+from ragcore.rules.types import ReviewStatus, Rule
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS rules (
@@ -54,6 +55,18 @@ CREATE TABLE IF NOT EXISTS rule_conflicts (
 );
 CREATE INDEX IF NOT EXISTS idx_rule_conflicts_a ON rule_conflicts(rule_id_a);
 CREATE INDEX IF NOT EXISTS idx_rule_conflicts_b ON rule_conflicts(rule_id_b);
+
+CREATE TABLE IF NOT EXISTS rule_audit_log (
+    entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    rule_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    reviewer TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    new_rule_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rule_audit_rule ON rule_audit_log(rule_id);
+CREATE INDEX IF NOT EXISTS idx_rule_audit_new_rule ON rule_audit_log(new_rule_id);
 
 CREATE TABLE IF NOT EXISTS rule_runs (
     source_id TEXT NOT NULL,
@@ -139,28 +152,29 @@ class SqliteRuleStore:
 
     @wrap_backend_errors
     def supersede(self, old_rule_id: str, new_rule: Rule) -> None:
-        if new_rule.supersedes != old_rule_id:
-            raise RagcoreError(
-                f"new_rule.supersedes ({new_rule.supersedes!r}) must equal "
-                f"old_rule_id ({old_rule_id!r})"
-            )
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
-                old_row = self._conn.execute(
-                    "SELECT rule_id FROM rules WHERE rule_id = ?", (old_rule_id,)
-                ).fetchone()
-                if old_row is None:
-                    raise RagcoreError(f"no rule found with rule_id {old_rule_id!r}")
-                self._insert_locked(new_rule)
-                self._conn.execute(
-                    "UPDATE rules SET is_latest = 0 WHERE rule_id = ?", (old_rule_id,)
-                )
+                self._supersede_locked(old_rule_id, new_rule)
             except BaseException:
                 self._conn.execute("ROLLBACK")
                 raise
             else:
                 self._conn.execute("COMMIT")
+
+    def _supersede_locked(self, old_rule_id: str, new_rule: Rule) -> None:
+        if new_rule.supersedes != old_rule_id:
+            raise RagcoreError(
+                f"new_rule.supersedes ({new_rule.supersedes!r}) must equal "
+                f"old_rule_id ({old_rule_id!r})"
+            )
+        old_row = self._conn.execute(
+            "SELECT rule_id FROM rules WHERE rule_id = ?", (old_rule_id,)
+        ).fetchone()
+        if old_row is None:
+            raise RagcoreError(f"no rule found with rule_id {old_rule_id!r}")
+        self._insert_locked(new_rule)
+        self._conn.execute("UPDATE rules SET is_latest = 0 WHERE rule_id = ?", (old_rule_id,))
 
     # -- conflicts (Phase 10 §3) --
 
@@ -198,6 +212,84 @@ class SqliteRuleStore:
             RuleConflict(
                 conflict_id=row[0], conflict_type=row[1], rule_ids=(row[2], row[3]),
                 rationale=row[4], winning_rule_id=row[5],
+            )
+            for row in rows
+        ]
+
+    # -- review workflow (Phase 10 §4) --
+
+    @wrap_backend_errors
+    def set_review_status(
+        self, rule_id: str, review_status: ReviewStatus, *, reviewer: str, reason: str
+    ) -> Rule:
+        if review_status not in ("verified", "rejected"):
+            raise RagcoreError(
+                f"set_review_status only supports transitioning to 'verified' or "
+                f"'rejected', got {review_status!r}"
+            )
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT payload_json FROM rules WHERE rule_id = ?", (rule_id,)
+                ).fetchone()
+                if row is None:
+                    raise RagcoreError(f"no rule found with rule_id {rule_id!r}")
+                updated = Rule.model_validate_json(row[0]).model_copy(
+                    update={"review_status": review_status}
+                )
+                self._conn.execute(
+                    "UPDATE rules SET review_status = ?, payload_json = ? WHERE rule_id = ?",
+                    (review_status, updated.model_dump_json(), rule_id),
+                )
+                self._append_audit_locked(
+                    rule_id=rule_id,
+                    action="approved" if review_status == "verified" else "rejected",
+                    reviewer=reviewer, reason=reason, new_rule_id=None,
+                )
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            else:
+                self._conn.execute("COMMIT")
+        return updated
+
+    @wrap_backend_errors
+    def record_edit(self, old_rule_id: str, new_rule: Rule, *, reviewer: str, reason: str) -> None:
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._supersede_locked(old_rule_id, new_rule)
+                self._append_audit_locked(
+                    rule_id=old_rule_id, action="edited", reviewer=reviewer,
+                    reason=reason, new_rule_id=new_rule.rule_id,
+                )
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            else:
+                self._conn.execute("COMMIT")
+
+    def _append_audit_locked(
+        self, *, rule_id: str, action: str, reviewer: str, reason: str, new_rule_id: str | None
+    ) -> None:
+        self._conn.execute(
+            "INSERT INTO rule_audit_log (rule_id, action, reviewer, reason, created_at, new_rule_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (rule_id, action, reviewer, reason, _now(), new_rule_id),
+        )
+
+    @wrap_backend_errors
+    def audit_log_for_rule(self, rule_id: str) -> list[ReviewAuditEntry]:
+        rows = self._conn.execute(
+            "SELECT entry_id, rule_id, action, reviewer, reason, created_at, new_rule_id "
+            "FROM rule_audit_log WHERE rule_id = ? OR new_rule_id = ? ORDER BY entry_id ASC",
+            (rule_id, rule_id),
+        ).fetchall()
+        return [
+            ReviewAuditEntry(
+                entry_id=f"review:{row[0]}", rule_id=row[1], action=row[2], reviewer=row[3],
+                reason=row[4], created_at=row[5], new_rule_id=row[6],
             )
             for row in rows
         ]

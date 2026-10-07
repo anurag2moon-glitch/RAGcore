@@ -38,6 +38,7 @@ from ragcore.rules.pipeline import (
     RuleExtractionReport,
     build_rules,
 )
+from ragcore.rules.review import ReviewAuditEntry, ReviewQueue
 from ragcore.rules.sqlite_store import SqliteRuleStore
 from ragcore.rules.types import (
     ConditionGroup,
@@ -62,6 +63,8 @@ __all__ = [
     "FactTypeSpec",
     "OntologyNormalizer",
     "Remedy",
+    "ReviewAuditEntry",
+    "ReviewQueue",
     "ReviewStatus",
     "Rule",
     "RuleCandidateDetector",
