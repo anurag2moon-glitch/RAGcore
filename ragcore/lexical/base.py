@@ -21,17 +21,28 @@ from ragcore.types import Chunk
 class LexicalStore(Protocol):
     def index(self, chunks: Sequence[Chunk]) -> None:
         """Insert or replace chunks (matched by chunk_id) in the keyword
-        index. Only `chunk_id`, `text`, and `meta.source_id` are used."""
+        index. Only `chunk_id`, `text`, `meta.source_id`, and
+        `meta.tenant_id` are used."""
         ...
 
     def search(
-        self, query: str, k: int, *, source_ids: Sequence[str] | None = None
+        self,
+        query: str,
+        k: int,
+        *,
+        source_ids: Sequence[str] | None = None,
+        tenant_id: str | None = None,
     ) -> list[LexicalHit]:
         """Up to `k` keyword matches for `query`, best first. `source_ids`,
         when given, restricts the search to those sources — the fast path
         HybridRetriever uses for a source_id-only Filter; any other filter
         shape is applied by the caller after hydration, since a lexical
-        backend generally can't evaluate the full Filter DSL."""
+        backend generally can't evaluate the full Filter DSL. `tenant_id`,
+        when given, is always safe to push down regardless of what else
+        is in the caller's Filter — narrowing by it can never change which
+        hits are correct, only how many irrelevant-tenant candidates get
+        pulled in before the caller's own post-filter runs (see
+        Fts5LexicalStore.search's docstring)."""
         ...
 
     def delete(

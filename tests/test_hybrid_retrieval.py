@@ -12,7 +12,11 @@ from pathlib import Path
 
 from ragcore.corpus import Corpus
 from ragcore.lexical.fts5 import Fts5LexicalStore
-from ragcore.retrieval.hybrid import HybridRetriever, _source_ids_from_filter
+from ragcore.retrieval.hybrid import (
+    HybridRetriever,
+    _source_ids_from_filter,
+    _tenant_id_from_filter,
+)
 from tests.fakes import FakeEmbedder, InMemoryStore
 
 
@@ -122,3 +126,33 @@ def test_source_id_filter_is_pushed_down_to_the_lexical_channel(md_book: Path) -
     results = retriever.retrieve("chunking", k=20, filters={"source_id": source_id})
 
     assert all(r.chunk.meta.source_id == source_id for r in results)
+
+
+def test_tenant_id_from_filter_extracts_a_plain_string_alongside_other_keys() -> None:
+    assert _tenant_id_from_filter(None) is None
+    assert _tenant_id_from_filter({}) is None
+    assert _tenant_id_from_filter({"tenant_id": "tenant-a"}) == "tenant-a"
+    assert _tenant_id_from_filter({"tenant_id": "tenant-a", "chapter_index": 1}) == "tenant-a"
+    assert _tenant_id_from_filter({"tenant_id": {"eq": "tenant-a"}}) is None
+
+
+def test_tenant_id_filter_is_pushed_down_to_the_lexical_channel_and_isolates_results(
+    md_book: Path, tmp_path: Path
+) -> None:
+    corpus = Corpus(InMemoryStore(dim=8), FakeEmbedder(dim=8))
+    book_b = tmp_path / "book_b.md"
+    book_b.write_text(
+        md_book.read_text(encoding="utf-8") + "\n\nExtra unique text for book b.\n",
+        encoding="utf-8",
+    )
+    corpus.ingest(md_book, tenant_id="tenant-a")
+    corpus.ingest(book_b, tenant_id="tenant-b")
+
+    lexical = Fts5LexicalStore(":memory:")
+    _index_all(corpus, lexical)
+
+    retriever = HybridRetriever(corpus.embedder, corpus.store, lexical, corpus)
+    results = retriever.retrieve("chunking", k=50, filters={"tenant_id": "tenant-a"})
+
+    assert results
+    assert all(r.chunk.meta.tenant_id == "tenant-a" for r in results)

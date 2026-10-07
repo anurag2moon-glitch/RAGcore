@@ -69,9 +69,48 @@ class Fts5LexicalStore:
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS fts_chunks USING fts5("
-            "chunk_id UNINDEXED, source_id UNINDEXED, text, "
+            "chunk_id UNINDEXED, source_id UNINDEXED, text, tenant_id UNINDEXED, "
             "tokenize='porter unicode61')"
         )
+        self._migrate_tenant_id_column_if_missing()
+
+    def _migrate_tenant_id_column_if_missing(self) -> None:
+        """A table created before tenant_id existed on this schema has
+        only 3 columns. Unlike LanceDB (add_columns()) or a plain SQLite
+        table (ALTER TABLE ... ADD COLUMN), an FTS5 virtual table
+        supports neither — confirmed directly: SQLite raises
+        "virtual tables may not be altered" for ALTER TABLE against an
+        fts5 table. The only way to add a column is read every existing
+        row, drop and recreate the table with the new schema, and
+        re-insert them (tenant_id=NULL, meaning "no tenant", identical
+        to how LanceDBStore backfills a migrated row)."""
+        existing_columns = {
+            d[0] for d in self._conn.execute("SELECT * FROM fts_chunks LIMIT 0").description
+        }
+        if "tenant_id" in existing_columns:
+            return
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._conn.execute(
+                    "SELECT chunk_id, source_id, text FROM fts_chunks"
+                ).fetchall()
+                self._conn.execute("DROP TABLE fts_chunks")
+                self._conn.execute(
+                    "CREATE VIRTUAL TABLE fts_chunks USING fts5("
+                    "chunk_id UNINDEXED, source_id UNINDEXED, text, tenant_id UNINDEXED, "
+                    "tokenize='porter unicode61')"
+                )
+                self._conn.executemany(
+                    "INSERT INTO fts_chunks (chunk_id, source_id, text, tenant_id) "
+                    "VALUES (?, ?, ?, NULL)",
+                    rows,
+                )
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            else:
+                self._conn.execute("COMMIT")
 
     @wrap_backend_errors
     def index(self, chunks: Sequence[Chunk]) -> None:
@@ -86,8 +125,8 @@ class Fts5LexicalStore:
                     f"DELETE FROM fts_chunks WHERE chunk_id IN ({placeholders})", ids
                 )
                 self._conn.executemany(
-                    "INSERT INTO fts_chunks (chunk_id, source_id, text) VALUES (?, ?, ?)",
-                    [(c.chunk_id, c.meta.source_id, c.text) for c in chunks],
+                    "INSERT INTO fts_chunks (chunk_id, source_id, text, tenant_id) VALUES (?, ?, ?, ?)",
+                    [(c.chunk_id, c.meta.source_id, c.text, c.meta.tenant_id) for c in chunks],
                 )
             except BaseException:
                 self._conn.execute("ROLLBACK")
@@ -97,8 +136,22 @@ class Fts5LexicalStore:
 
     @wrap_backend_errors
     def search(
-        self, query: str, k: int, *, source_ids: Sequence[str] | None = None
+        self,
+        query: str,
+        k: int,
+        *,
+        source_ids: Sequence[str] | None = None,
+        tenant_id: str | None = None,
     ) -> list[LexicalHit]:
+        """`tenant_id`, when given, narrows the match at the SQL level —
+        a performance/recall optimization, not the thing that makes
+        isolation correct (that's HybridRetriever's own Python-side
+        post-filter against each hit's real, hydrated ChunkMeta, which
+        runs regardless). Without this, a multi-tenant deployment with
+        many tenants could have `k`'s worth of *other* tenants' hits
+        crowd out this tenant's own candidates before the post-filter
+        ever sees them — correctness was never at risk, recall quality
+        at scale was (see docs/ARCHITECTURE.md Phase 7 gap item 28a)."""
         fts_query = _fts5_query(query)
         if fts_query is None or k <= 0:
             return []
@@ -109,6 +162,9 @@ class Fts5LexicalStore:
             placeholders = ",".join("?" * len(source_ids))
             sql += f" AND source_id IN ({placeholders})"
             params.extend(source_ids)
+        if tenant_id is not None:
+            sql += " AND tenant_id = ?"
+            params.append(tenant_id)
         sql += " ORDER BY rank LIMIT ?"
         params.append(k)
 

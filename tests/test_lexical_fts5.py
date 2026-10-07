@@ -4,18 +4,21 @@ deletion, and the online-backup helper — no network, stdlib sqlite3 only.
 
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from ragcore.lexical.fts5 import Fts5LexicalStore
 from ragcore.types import Chunk, ChunkMeta
 
 
-def _chunk(chunk_id: str, source_id: str, text: str, chunk_index: int = 0) -> Chunk:
+def _chunk(
+    chunk_id: str, source_id: str, text: str, chunk_index: int = 0, tenant_id: str | None = None
+) -> Chunk:
     meta = ChunkMeta(
         source_id=source_id, source_path=f"{source_id}.md", source_title="T", source_type="md",
         section_path=(), chapter_title=None, chapter_index=None, section=None,
         page_start=None, page_end=None, chunk_index=chunk_index, context_group_id="g",
-        char_start=0, char_end=len(text), token_count=len(text) // 4,
+        char_start=0, char_end=len(text), token_count=len(text) // 4, tenant_id=tenant_id,
     )
     return Chunk(chunk_id=chunk_id, text=text, meta=meta)
 
@@ -90,6 +93,62 @@ def test_search_sanitizes_fts5_query_syntax_in_raw_user_input() -> None:
 
     hits = store.search('"unbalanced quote AND OR NEAR(alpha, beta)', k=10)
     assert isinstance(hits, list)  # did not raise
+
+
+def test_search_restricts_to_given_tenant_id() -> None:
+    store = Fts5LexicalStore(":memory:")
+    store.index(
+        [
+            _chunk("c1", "s1", "quick fox", tenant_id="tenant-a"),
+            _chunk("c2", "s2", "quick fox", tenant_id="tenant-b"),
+        ]
+    )
+
+    hits = store.search("quick fox", k=10, tenant_id="tenant-a")
+
+    assert [h.chunk_id for h in hits] == ["c1"]
+
+
+def test_search_with_no_tenant_id_filter_sees_every_tenant() -> None:
+    store = Fts5LexicalStore(":memory:")
+    store.index(
+        [
+            _chunk("c1", "s1", "quick fox", tenant_id="tenant-a"),
+            _chunk("c2", "s2", "quick fox", tenant_id="tenant-b"),
+        ]
+    )
+
+    hits = store.search("quick fox", k=10)
+
+    assert {h.chunk_id for h in hits} == {"c1", "c2"}
+
+
+def test_opening_a_pre_tenant_id_table_migrates_transparently(tmp_path: Path) -> None:
+    """Simulates an on-disk fts5 table from before tenant_id existed on
+    this schema. ALTER TABLE doesn't work on fts5 virtual tables
+    (confirmed directly: SQLite raises "virtual tables may not be
+    altered") so opening it must drop-and-rebuild instead, preserving
+    every pre-existing row with tenant_id=NULL."""
+    path = tmp_path / "lex.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE VIRTUAL TABLE fts_chunks USING fts5("
+        "chunk_id UNINDEXED, source_id UNINDEXED, text, tokenize='porter unicode61')"
+    )
+    conn.execute(
+        "INSERT INTO fts_chunks (chunk_id, source_id, text) VALUES ('pre-existing', 's1', 'hello world')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = Fts5LexicalStore(path)  # must migrate, not raise
+
+    assert store.count() == 1
+    assert [h.chunk_id for h in store.search("hello", k=10)] == ["pre-existing"]
+    assert store.search("hello", k=10, tenant_id="tenant-a") == []
+
+    store.index([_chunk("new", "s1", "hello again", tenant_id="tenant-a")])
+    assert {h.chunk_id for h in store.search("hello", k=10)} == {"pre-existing", "new"}
 
 
 def test_backup_to_produces_a_restorable_copy(tmp_path: Path) -> None:

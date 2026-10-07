@@ -52,6 +52,19 @@ def _source_ids_from_filter(filters: Filter | None) -> Sequence[str] | None:
     return [value]
 
 
+def _tenant_id_from_filter(filters: Filter | None) -> str | None:
+    """Unlike _source_ids_from_filter, this doesn't require tenant_id to
+    be the *only* key — a tenant_id value is always safe to push down to
+    the lexical store's own SQL alongside whatever else is in `filters`
+    (ragcore.lexical.base.LexicalStore.search's docstring), narrowing the
+    candidate pool before the Python post-filter runs rather than relying
+    on the post-filter alone for correctness at this stage."""
+    if not filters or "tenant_id" not in filters:
+        return None
+    value = filters["tenant_id"]
+    return value if isinstance(value, str) else None
+
+
 class HybridRetriever:
     def __init__(
         self,
@@ -88,7 +101,8 @@ class HybridRetriever:
         vector_hits = self._store.query(query_vec, fetch, filters)
 
         source_ids = _source_ids_from_filter(filters)
-        lexical_hits = self._lexical.search(query, fetch, source_ids=source_ids)
+        tenant_id = _tenant_id_from_filter(filters)
+        lexical_hits = self._lexical.search(query, fetch, source_ids=source_ids, tenant_id=tenant_id)
 
         rrf_scores: dict[str, float] = {}
         chunks_by_id: dict[str, Chunk] = {}
