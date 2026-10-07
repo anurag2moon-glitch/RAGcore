@@ -119,3 +119,37 @@ jobs:
       - name: Run the MCP server test suite
         working-directory: mcp-server
         run: python -m pytest -q
+
+  test-typescript-sdk:
+    # sdk/typescript/ is a fifth sibling package — the TypeScript
+    # client SDK (docs/adr/0008). Its tests spawn a real server/
+    # process (server/tests/run_test_server.py) over a real socket, so
+    # this job needs both a Python env (for the server) and a Node env
+    # (for the SDK + test runner).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up the server/ venv the test suite spawns
+        run: |
+          python -m venv server/.venv
+          server/.venv/bin/pip install -e .
+          server/.venv/bin/pip install -e "server[dev]"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install and build the TypeScript SDK
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm run build
+
+      - name: Run the TypeScript SDK test suite
+        working-directory: sdk/typescript
+        run: npm test
