@@ -54,7 +54,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `embedding/` | Text → vectors | `VoyageContextEmbedder` (contextualized), `OpenAIEmbedder` (flattens groups, no contextualization — see its module docstring); both batched/retried; `cost.UsageTracker` (`.usage`) and `cache.SqliteEmbeddingCache` (opt-in via `Corpus(embedding_cache=...)`) | `test_voyage_batching.py`, `test_openai_embedder.py`, `test_embedding_cost.py`, `test_embedding_cache*.py`; live tests opt-in |
 | `stores/` | Vector persistence + similarity query + filter DSL | `LanceDBStore` (embedded, on-disk, filter allowlist, snapshot/restore via native tags, `create_vector_index`/`compact`/`index_stats`) | `test_store_swap.py`, `test_lancedb_snapshot.py`, `test_lancedb_index_lifecycle.py`, integration concurrency/scale suite |
 | `retrieval/` | Query → ranked `Retrieved[]`, composable decorator chain | `VectorRetriever`, `HybridRetriever` (RRF + BM25 via FTS5), `GraphRetriever`, `ConceptRetriever`, `HierarchyRetriever`, `IterativeRetriever` (multi-hop), `CrossEncoderReranker`, `MMRReranker`, `QueryExpansionRetriever` (HyDE/multi-query/decomposition), `RoutedRetriever` (per-query mode routing), `DriftRetriever`/`graph_search_modes()` (named local/global/DRIFT); `fusion.rrf_merge` shared by all the RRF-fusing layers; `stack.default_stack()` wires the always-on default chain | One test file per layer + `test_default_stack.py` + integration load/query tests |
-| `lexical/` | BM25 full-text index | `Fts5LexicalStore` (stdlib SQLite FTS5, zero new deps) | `test_lexical_fts5.py`, `test_lexical_pipeline.py` |
+| `lexical/` | BM25 full-text index | `Fts5LexicalStore` (stdlib SQLite FTS5, zero new deps; `tenant_id`-aware search, drop-and-rebuild migration since fts5 refuses `ALTER TABLE`) | `test_lexical_fts5.py`, `test_lexical_pipeline.py` |
 | `graph/` | Entity/relation extraction + GraphRAG store | `ClaudeEntityExtractor` (book-tuned taxonomy, opt-in `gleaning_rounds`), `SqliteGraphStore` + `KuzuGraphStore` (WAL/locked and embedded-property-graph, both merge-not-replace), `EmbeddingEntityResolver`, shared `merge.merge_extra` | ~19+ tests incl. concurrency, cross-book resolution, a real P&P fixture; `test_kuzu_graph_store.py` (parametrized against both stores) |
 | `concepts/` | Abstract concept/theme extraction + community detection + summaries | `ClaudeConceptExtractor` (opt-in `gleaning_rounds`), `SqliteConceptStore`, Louvain or Leiden via `networkx` (`concepts` extra), `EmbeddingConceptMapper`/`ClaudeConceptMapper` | `test_communities.py`, `test_communities_leiden.py`, `test_concept_*.py` (extraction/removal/resume/retrieval/store) |
 | `contextual/` | Per-chunk situating blurb before re-embedding | `ClaudeContextWriter`, `SqliteContextStore` | `test_contextual_embeddings.py`, `test_contextual_resume.py` |
@@ -283,12 +283,18 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   `HierarchyRetriever` read their own stores, none of which carry
   `tenant_id` yet (next bullet) — stacking one of those onto a wrapped
   `Corpus` is not protected by this wrapper.
-- ⬜ `tenant_id` on every *other* store — not done; splits into two
-  genuinely different problems, not six repeats of the same bolt-on
-  (see `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`):
-  - **Tier 1 (passive column is correct)**: `Fts5LexicalStore`,
-    the contextual-embedding store, the hierarchy store, `SqliteClaimStore`
-    — all already scoped by `chunk_id`/`source_id`.
+- 🟡 `tenant_id` on every *other* store — splits into two genuinely
+  different problems, not six repeats of the same bolt-on (see
+  `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`):
+  - **Tier 1 (passive column is correct)**: ✅ `Fts5LexicalStore`
+    (tenant_id column + `HybridRetriever` SQL-level pushdown via
+    `_tenant_id_from_filter`; migration for an existing on-disk table
+    isn't LanceDB's `add_columns()` pattern — FTS5 virtual tables refuse
+    `ALTER TABLE` outright, confirmed directly, so this one
+    drops-and-rebuilds instead). ⬜ the contextual-embedding store, the
+    hierarchy store, `SqliteClaimStore` — not done yet, same shape
+    expected (chunk_id/source_id PRIMARY KEY, real `ALTER TABLE` support
+    unlike FTS5).
   - **Tier 2 (passive column would be actively unsafe)**:
     `SqliteGraphStore`/`KuzuGraphStore`, `SqliteConceptStore` — entity/
     relation/concept ids are content-addressed over bare normalized
@@ -493,16 +499,18 @@ Postgres-against-a-live-server verification remain as real, open work.**
     chunking/embedding/reranker/prompt variants, and an answer-relevance
     metric distinct from groundedness — both still open.
 
-**Phase 7 (multi-tenancy): foundation steps 27/29 done, everything else
-(28, 30+) still from scratch.**
+**Phase 7 (multi-tenancy): foundation steps 27/29 done, 28a in progress,
+everything else (30+) still from scratch.**
 27. ✅ `tenant_id` on `ChunkMeta` + `Corpus.ingest()`/`ingest_many()` +
     `LanceDBStore` (schema, filterable fields, transparent migration of
     an existing on-disk table). See
     `docs/adr/0006-tenant-id-foundation-not-enforcement.md`.
-28. ⬜ `tenant_id` on every other store — two tiers, not one task; see
+28. 🟡 `tenant_id` on every other store — two tiers, not one task; see
     `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`.
-    28a. ⬜ Tier 1, passive column is correct: lexical, contextual,
-    hierarchy, claims stores.
+    28a. 🟡 Tier 1, passive column is correct: ✅ `Fts5LexicalStore`
+    (+ `HybridRetriever` SQL-level pushdown, commit 3f1fd9b — migrated
+    via drop-and-rebuild, since fts5 virtual tables refuse `ALTER
+    TABLE`). ⬜ contextual, hierarchy, claims stores still open.
     28b. ⬜ Tier 2, passive column would be actively unsafe (content-
     addressed ids with no source scoping, by design): graph store,
     concept store — needs `tenant_id` baked into the id or a compound
