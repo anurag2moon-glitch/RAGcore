@@ -283,11 +283,26 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   `HierarchyRetriever` read their own stores, none of which carry
   `tenant_id` yet (next bullet) — stacking one of those onto a wrapped
   `Corpus` is not protected by this wrapper.
-- ⬜ `tenant_id` on every *other* store — `SqliteGraphStore`/
-  `KuzuGraphStore`, `SqliteConceptStore`, `SqliteClaimStore`,
-  `Fts5LexicalStore`, hierarchy/context stores — not done. Only the
-  vector store has it so far, and only the vector-retrieval path is
-  enforced by `TenantScopedCorpus`.
+- ⬜ `tenant_id` on every *other* store — not done; splits into two
+  genuinely different problems, not six repeats of the same bolt-on
+  (see `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`):
+  - **Tier 1 (passive column is correct)**: `Fts5LexicalStore`,
+    the contextual-embedding store, the hierarchy store, `SqliteClaimStore`
+    — all already scoped by `chunk_id`/`source_id`.
+  - **Tier 2 (passive column would be actively unsafe)**:
+    `SqliteGraphStore`/`KuzuGraphStore`, `SqliteConceptStore` — entity/
+    relation/concept ids are content-addressed over bare normalized
+    text with no source scoping *by design* (so "Bingley"/"Mr. Bingley"
+    merge across chapters); two tenants' same-named entity or concept
+    compute the same id and merge-not-replace write logic would merge
+    their provenance into one shared row today, a real cross-tenant
+    leak a passive filter column cannot fix. Needs `tenant_id` baked
+    into the id itself or a compound key, deliberately left as an open
+    design question rather than shipped half-right.
+  - Only the vector store has `tenant_id` today, and only the
+    vector-retrieval path is enforced by `TenantScopedCorpus` — do
+    **not** wire `GraphRetriever`/`ConceptRetriever` onto a
+    multi-tenant `TenantScopedCorpus` until Tier 2 is resolved.
 - ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
   metering ready for billing — none of this exists.
 - ⬜ Semantic/result cache with tenant-scoped invalidation — doesn't exist.
@@ -480,12 +495,21 @@ Postgres-against-a-live-server verification remain as real, open work.**
     `LanceDBStore` (schema, filterable fields, transparent migration of
     an existing on-disk table). See
     `docs/adr/0006-tenant-id-foundation-not-enforcement.md`.
-28. ⬜ `tenant_id` on every other store (graph, concepts, claims, lexical,
-    hierarchy, context).
+28. ⬜ `tenant_id` on every other store — two tiers, not one task; see
+    `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`.
+    28a. ⬜ Tier 1, passive column is correct: lexical, contextual,
+    hierarchy, claims stores.
+    28b. ⬜ Tier 2, passive column would be actively unsafe (content-
+    addressed ids with no source scoping, by design): graph store,
+    concept store — needs `tenant_id` baked into the id or a compound
+    key, an open design question, not a mechanical bolt-on.
 29. ✅ Isolation enforcement for the vector-store path —
     `ragcore.tenancy.TenantScopedCorpus`. Does not cover graph/concept/
     hierarchy retrieval layers until item 28 lands (those stores have no
-    `tenant_id` to enforce against yet).
+    `tenant_id` to enforce against yet) — and per 28b, wiring
+    `GraphRetriever`/`ConceptRetriever` onto a multi-tenant
+    `TenantScopedCorpus` today risks real cross-tenant leakage, not
+    just a missed filter.
 30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
     billing-ready usage metering.
 31. ⬜ Semantic/result cache with tenant-scoped invalidation.
