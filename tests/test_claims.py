@@ -47,6 +47,7 @@ class _FakeClaimExtractor:
                 concept_ids=tuple(c.concept_id for c in concepts),
                 source_id=chunk.meta.source_id, chunk_id=chunk.chunk_id, text=text,
                 author_confidence="firm", model=self.model, prompt_version="v1", created_at="now",
+                tenant_id=chunk.meta.tenant_id,
             )
         ]
 
@@ -165,3 +166,43 @@ def test_an_extractor_returning_no_claims_is_tolerated(md_book: Path) -> None:
     for source in corpus.sources():
         for chunk in corpus.store.get_by_source(source.source_id):
             assert claim_store.checkpoint(source.source_id, chunk.meta.context_group_id) is not None
+
+
+def test_build_claims_persists_the_chunks_own_tenant_id(md_book: Path) -> None:
+    corpus = Corpus(InMemoryStore(dim=8), FakeEmbedder(dim=8))
+    corpus.ingest(md_book, tenant_id="tenant-a")
+    concept_store = SqliteConceptStore(":memory:")
+    build_concepts(corpus, concept_store, _FakeConceptExtractor())
+
+    claim_store = SqliteClaimStore(":memory:")
+    build_claims(corpus, claim_store, _FakeClaimExtractor(), concept_store)
+
+    claims = claim_store.claims_for_concept("concept:shared-idea")
+    assert claims
+    assert all(c.tenant_id == "tenant-a" for c in claims)
+
+
+def test_opening_a_pre_tenant_id_claims_table_migrates_via_alter_table(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "claims.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE claims (claim_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, "
+        "chunk_id TEXT NOT NULL, text TEXT NOT NULL, author_confidence TEXT NOT NULL, "
+        "model TEXT NOT NULL, prompt_version TEXT NOT NULL, created_at TEXT NOT NULL, "
+        "vector_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO claims (claim_id, source_id, chunk_id, text, author_confidence, model, "
+        "prompt_version, created_at, vector_json) "
+        "VALUES ('c1', 's1', 'ch1', 'text', 'firm', 'm', 'v1', 'now', NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = SqliteClaimStore(path)  # must migrate via ALTER TABLE, not raise
+
+    claim = store.claim("c1")
+    assert claim is not None
+    assert claim.tenant_id is None

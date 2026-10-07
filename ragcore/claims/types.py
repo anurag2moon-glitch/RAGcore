@@ -72,6 +72,13 @@ class SourceClaim:
     `CommunitySummary.vector`. Powers the embedding-shortlist candidate
     bounding in `ragcore.claims.linking.link_claims`."""
 
+    tenant_id: str | None = None
+    """Same meaning as `ragcore.types.ChunkMeta.tenant_id` — taken
+    directly from the source chunk this claim was extracted from
+    (`ClaudeClaimExtractor.extract`), since claim_id is already scoped
+    by `(source_id, chunk_id)` and every chunk of one source shares one
+    tenant_id by construction."""
+
     extra: dict[str, Any] = field(default_factory=dict)
 
 

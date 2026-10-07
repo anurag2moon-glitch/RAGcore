@@ -187,20 +187,21 @@ class ClaudeClaimExtractor:
             if not concept_ids:
                 continue  # every concept citation was hallucinated — nothing to anchor this claim to
 
-            source_id = next((chunk.meta.source_id for chunk in chunks if chunk.chunk_id == chunk_id), None)
-            if source_id is None:
+            source_chunk = next((chunk for chunk in chunks if chunk.chunk_id == chunk_id), None)
+            if source_chunk is None:
                 continue
             claims.append(
                 SourceClaim(
-                    claim_id=_claim_id(source_id, chunk_id, c.text),
+                    claim_id=_claim_id(source_chunk.meta.source_id, chunk_id, c.text),
                     concept_ids=concept_ids,
-                    source_id=source_id,
+                    source_id=source_chunk.meta.source_id,
                     chunk_id=chunk_id,
                     text=c.text,
                     author_confidence=c.author_confidence,
                     model=self.model,
                     prompt_version=EXTRACTOR_PROMPT_VERSION,
                     created_at=now,
+                    tenant_id=source_chunk.meta.tenant_id,
                 )
             )
         return claims

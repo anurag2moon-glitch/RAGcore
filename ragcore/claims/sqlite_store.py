@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS claims (
     model TEXT NOT NULL,
     prompt_version TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    vector_json TEXT
+    vector_json TEXT,
+    tenant_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_claims_source ON claims(source_id);
 CREATE INDEX IF NOT EXISTS idx_claims_chunk ON claims(chunk_id);
@@ -91,6 +92,9 @@ class SqliteClaimStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(claims)")}
+        if "tenant_id" not in columns:
+            self._conn.execute("ALTER TABLE claims ADD COLUMN tenant_id TEXT")
 
     # -- extraction writes (single transaction, includes the checkpoint) --
 
@@ -111,13 +115,13 @@ class SqliteClaimStore:
                     self._conn.execute(
                         "INSERT INTO claims "
                         "(claim_id, source_id, chunk_id, text, author_confidence, model, "
-                        "prompt_version, created_at, vector_json) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                        "prompt_version, created_at, vector_json, tenant_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                         "ON CONFLICT(claim_id) DO UPDATE SET "
                         "vector_json = COALESCE(claims.vector_json, excluded.vector_json)",
                         (
                             c.claim_id, c.source_id, c.chunk_id, c.text, c.author_confidence,
-                            c.model, c.prompt_version, c.created_at, vector_json,
+                            c.model, c.prompt_version, c.created_at, vector_json, c.tenant_id,
                         ),
                     )
                     for concept_id in c.concept_ids:
@@ -176,7 +180,7 @@ class SqliteClaimStore:
     def claim(self, claim_id: str) -> SourceClaim | None:
         row = self._conn.execute(
             "SELECT source_id, chunk_id, text, author_confidence, model, prompt_version, "
-            "created_at, vector_json FROM claims WHERE claim_id = ?",
+            "created_at, vector_json, tenant_id FROM claims WHERE claim_id = ?",
             (claim_id,),
         ).fetchone()
         if row is None:
@@ -187,7 +191,7 @@ class SqliteClaimStore:
     def claims_for_concept(self, concept_id: str) -> list[SourceClaim]:
         rows = self._conn.execute(
             "SELECT c.claim_id, c.source_id, c.chunk_id, c.text, c.author_confidence, c.model, "
-            "c.prompt_version, c.created_at, c.vector_json "
+            "c.prompt_version, c.created_at, c.vector_json, c.tenant_id "
             "FROM claim_concepts cc JOIN claims c ON cc.claim_id = c.claim_id "
             "WHERE cc.concept_id = ? ORDER BY c.claim_id",
             (concept_id,),
@@ -368,7 +372,10 @@ class SqliteClaimStore:
     # -- internals -----------------------------------------------------
 
     def _row_to_claim(self, claim_id: str, row: tuple) -> SourceClaim:
-        source_id, chunk_id, text, author_confidence, model, prompt_version, created_at, vector_json = row
+        (
+            source_id, chunk_id, text, author_confidence, model, prompt_version, created_at,
+            vector_json, tenant_id,
+        ) = row
         concept_ids = [
             r[0]
             for r in self._conn.execute(
@@ -386,4 +393,5 @@ class SqliteClaimStore:
             prompt_version=prompt_version,
             created_at=created_at,
             vector=tuple(json.loads(vector_json)) if vector_json else None,
+            tenant_id=tenant_id,
         )
