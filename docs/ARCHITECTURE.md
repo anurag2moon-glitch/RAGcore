@@ -393,9 +393,14 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   injectable `http_client`, same discipline as every other swappable
   component here). Tested against the real `server/` app in-process via
   FastAPI's `TestClient`.
-- ⬜ gRPC, a TypeScript SDK, MCP server, Docker/Helm/k8s manifests,
-  Redis, feature flags, load tests (Locust/k6) — none of this exists
-  yet.
+- ✅ **MCP server** — `mcp-server/` (`mcp_server.server.build_server`,
+  four tools: `ingest_file`/`retrieve`/`ask`/`list_sources`, via the
+  official `mcp` SDK's `MCPServer`). Deliberately duplicates `server/`'s
+  single-tenant corpus-provider shape rather than importing it — two
+  independently launched artifacts (an MCP client vs. an HTTP caller)
+  shouldn't be coupled through one importing the other.
+- ⬜ gRPC, a TypeScript SDK, Docker/Helm/k8s manifests, Redis, feature
+  flags, load tests (Locust/k6) — none of this exists yet.
 - 🟡 Backup/restore runbook — the *mechanism* exists per-store
   (`backup_to`/`restore_from_backup`/snapshot/restore, Phase 1/`versioning/`)
   and the server above gives a real process to restart against a restored
@@ -618,8 +623,9 @@ else (28b, 30+) still from scratch.**
 still from scratch.**
 34. ✅ Reference FastAPI server (`server/`) + its free OpenAPI spec —
     commit 41b0bec. See `docs/adr/0008-api-server-as-sibling-package.md`.
-35. 🟡 Python SDK (`sdk/python/`, commit faaeccd) — ✅. TypeScript SDK,
-    gRPC, MCP server — ⬜, still open.
+35. 🟡 Python SDK (`sdk/python/`, commit faaeccd) — ✅. MCP server
+    (`mcp-server/`, commit b0e85c2) — ✅. TypeScript SDK, gRPC — ⬜,
+    still open.
 36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
 37. ⬜ Load tests (Locust/k6).
 38. ⬜ Backup/restore runbook (the mechanism already exists per-store;
