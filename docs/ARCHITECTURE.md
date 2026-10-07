@@ -399,8 +399,14 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   single-tenant corpus-provider shape rather than importing it — two
   independently launched artifacts (an MCP client vs. an HTTP caller)
   shouldn't be coupled through one importing the other.
-- ⬜ gRPC, a TypeScript SDK, Docker/Helm/k8s manifests, Redis, feature
-  flags, load tests (Locust/k6) — none of this exists yet.
+- ✅ **TypeScript SDK** — `sdk/typescript/` (`RagcoreClient`, zero
+  runtime dependencies — Node's built-in `fetch`/`FormData`/`Blob`).
+  Tested against a *real* `server/` process over a real socket
+  (`server/tests/run_test_server.py`) — no in-process ASGI bridge is
+  reachable from a Node test runner the way FastAPI's `TestClient`
+  gives the Python SDK one.
+- ⬜ gRPC, Docker/Helm/k8s manifests, Redis, feature flags, load tests
+  (Locust/k6) — none of this exists yet.
 - 🟡 Backup/restore runbook — the *mechanism* exists per-store
   (`backup_to`/`restore_from_backup`/snapshot/restore, Phase 1/`versioning/`)
   and the server above gives a real process to restart against a restored
@@ -624,8 +630,8 @@ still from scratch.**
 34. ✅ Reference FastAPI server (`server/`) + its free OpenAPI spec —
     commit 41b0bec. See `docs/adr/0008-api-server-as-sibling-package.md`.
 35. 🟡 Python SDK (`sdk/python/`, commit faaeccd) — ✅. MCP server
-    (`mcp-server/`, commit b0e85c2) — ✅. TypeScript SDK, gRPC — ⬜,
-    still open.
+    (`mcp-server/`, commit b0e85c2) — ✅. TypeScript SDK
+    (`sdk/typescript/`, commit 2ba96e6) — ✅. gRPC — ⬜, still open.
 36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
 37. ⬜ Load tests (Locust/k6).
 38. ⬜ Backup/restore runbook (the mechanism already exists per-store;
