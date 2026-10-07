@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Sequence
 from ragcore.chunking.tokenizer import count_tokens
 from ragcore.hierarchy.base import HierarchyStore
 from ragcore.hierarchy.types import HierarchyLevel, HierarchyNode
+from ragcore.retrieval._filters import tenant_id_from_filter
 from ragcore.retrieval.base import Retriever
 from ragcore.retrieval.scoring import cosine_score
 from ragcore.types import Chunk, ChunkMeta, Filter, Retrieved
@@ -56,6 +57,7 @@ def _node_chunk(node: HierarchyNode) -> Chunk:
         char_start=0,
         char_end=len(text),
         token_count=count_tokens(text),
+        tenant_id=node.tenant_id,
         extra={
             "ragcore_kind": "hierarchy_summary",
             "hierarchy_level": node.level,
@@ -110,11 +112,12 @@ class HierarchyRetriever:
         reserve_pool = all_seeds[seed_k:]
         seed_id_set = {r.chunk.chunk_id for r in seeds}
 
+        tenant_id = tenant_id_from_filter(filters)
         candidates = [
             n
             for level in self._levels
             for n in self._hierarchy.nodes_by_level(level)
-            if n.vector is not None
+            if n.vector is not None and (tenant_id is None or n.tenant_id == tenant_id)
         ]
 
         node_results: list[Retrieved] = []

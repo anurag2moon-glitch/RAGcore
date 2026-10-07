@@ -278,23 +278,40 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   `tenant_id` and forces it on every `ingest`/`ingest_many`/`retrieve`/
   `ask`/`get`/`sources`/`remove`/`count` call, raising `TenancyError` on
   any caller-supplied value that disagrees rather than silently
-  overriding or silently trusting it. **Documented scope limit, not
-  silently assumed**: `GraphRetriever`/`ConceptRetriever`/
-  `HierarchyRetriever` read their own stores, none of which carry
-  `tenant_id` yet (next bullet) — stacking one of those onto a wrapped
-  `Corpus` is not protected by this wrapper.
+  overriding or silently trusting it.
+- ✅ **`HierarchyRetriever` fixed to actually respect the filter** —
+  found while finishing item 28a: adding `tenant_id` to
+  `SqliteHierarchyStore` alone did **not** close a leak.
+  `HierarchyRetriever.retrieve()` called `nodes_by_level()` (every
+  tenant's nodes) and never re-checked the result against `filters` at
+  all — unlike `HybridRetriever`'s lexical-only hits, which already got
+  a Python post-filter, nothing downstream of `HierarchyRetriever`
+  re-validates a filter against its synthetic node results either, so
+  this was a genuine cross-tenant leak, not a recall-at-scale concern
+  like the lexical case. Fixed: `nodes_by_level()`'s candidates are now
+  filtered by `tenant_id` (via the new shared
+  `ragcore.retrieval._filters.tenant_id_from_filter`) before scoring,
+  and `_node_chunk()` now stamps the synthetic chunk's own
+  `tenant_id` from `node.tenant_id` (it never did before). Proven with a
+  test that reproduces the exact leak shape and confirms it's closed.
+- 🟡 `GraphRetriever`/`ConceptRetriever` — **not yet checked or fixed**.
+  Their own stores (`SqliteGraphStore`/`KuzuGraphStore`,
+  `SqliteConceptStore`) are Tier 2 (item 28b, below) and don't carry
+  `tenant_id` at all yet, so the same category of fix isn't possible
+  for them until that lands — stacking either onto a wrapped `Corpus`
+  is not protected by `TenantScopedCorpus` today.
 - 🟡 `tenant_id` on every *other* store — splits into two genuinely
   different problems, not six repeats of the same bolt-on (see
   `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`):
-  - **Tier 1 (passive column is correct)**: ✅ `Fts5LexicalStore`
-    (tenant_id column + `HybridRetriever` SQL-level pushdown via
-    `_tenant_id_from_filter`; migration for an existing on-disk table
-    isn't LanceDB's `add_columns()` pattern — FTS5 virtual tables refuse
-    `ALTER TABLE` outright, confirmed directly, so this one
-    drops-and-rebuilds instead). ⬜ the contextual-embedding store, the
-    hierarchy store, `SqliteClaimStore` — not done yet, same shape
-    expected (chunk_id/source_id PRIMARY KEY, real `ALTER TABLE` support
-    unlike FTS5).
+  - **Tier 1 (passive column is correct)**: ✅ all four done —
+    `Fts5LexicalStore` (tenant_id column + `HybridRetriever` SQL-level
+    pushdown via `_tenant_id_from_filter`; migration isn't LanceDB's
+    `add_columns()` pattern — FTS5 virtual tables refuse `ALTER TABLE`
+    outright, confirmed directly, so this one drops-and-rebuilds
+    instead), `SqliteContextStore`, `SqliteHierarchyStore`,
+    `SqliteClaimStore` (the latter three are ordinary SQLite tables:
+    `PRAGMA table_info()` + `ALTER TABLE ADD COLUMN`, no drop-and-rebuild
+    needed).
   - **Tier 2 (passive column would be actively unsafe)**:
     `SqliteGraphStore`/`KuzuGraphStore`, `SqliteConceptStore` — entity/
     relation/concept ids are content-addressed over bare normalized
@@ -499,29 +516,36 @@ Postgres-against-a-live-server verification remain as real, open work.**
     chunking/embedding/reranker/prompt variants, and an answer-relevance
     metric distinct from groundedness — both still open.
 
-**Phase 7 (multi-tenancy): foundation steps 27/29 done, 28a in progress,
-everything else (30+) still from scratch.**
+**Phase 7 (multi-tenancy): foundation steps 27/28a/29 done, everything
+else (28b, 30+) still from scratch.**
 27. ✅ `tenant_id` on `ChunkMeta` + `Corpus.ingest()`/`ingest_many()` +
     `LanceDBStore` (schema, filterable fields, transparent migration of
     an existing on-disk table). See
     `docs/adr/0006-tenant-id-foundation-not-enforcement.md`.
 28. 🟡 `tenant_id` on every other store — two tiers, not one task; see
     `docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`.
-    28a. 🟡 Tier 1, passive column is correct: ✅ `Fts5LexicalStore`
-    (+ `HybridRetriever` SQL-level pushdown, commit 3f1fd9b — migrated
-    via drop-and-rebuild, since fts5 virtual tables refuse `ALTER
-    TABLE`). ⬜ contextual, hierarchy, claims stores still open.
+    28a. ✅ Tier 1, passive column is correct — all four done:
+    `Fts5LexicalStore` (+ `HybridRetriever` SQL-level pushdown, commit
+    3f1fd9b — migrated via drop-and-rebuild, since fts5 virtual tables
+    refuse `ALTER TABLE`), `SqliteContextStore` (commit 8987bf9),
+    `SqliteHierarchyStore` (commit 0bdedad), `SqliteClaimStore` (commit
+    b76a7b8) — the latter three are ordinary SQLite tables, migrated via
+    the simpler `PRAGMA table_info()` + `ALTER TABLE ADD COLUMN`.
     28b. ⬜ Tier 2, passive column would be actively unsafe (content-
     addressed ids with no source scoping, by design): graph store,
     concept store — needs `tenant_id` baked into the id or a compound
     key, an open design question, not a mechanical bolt-on.
 29. ✅ Isolation enforcement for the vector-store path —
-    `ragcore.tenancy.TenantScopedCorpus`. Does not cover graph/concept/
-    hierarchy retrieval layers until item 28 lands (those stores have no
-    `tenant_id` to enforce against yet) — and per 28b, wiring
-    `GraphRetriever`/`ConceptRetriever` onto a multi-tenant
-    `TenantScopedCorpus` today risks real cross-tenant leakage, not
-    just a missed filter.
+    `ragcore.tenancy.TenantScopedCorpus`, plus (found and fixed while
+    closing out 28a) a real leak in `HierarchyRetriever`, which never
+    re-checked its synthetic node results against `filters` at all —
+    unlike the lexical channel's existing post-filter, this had no
+    safety net anywhere downstream. Now fixed via a shared
+    `tenant_id_from_filter` helper. `GraphRetriever`/`ConceptRetriever`
+    are **not yet checked or fixed** — both read Tier 2 stores (28b)
+    that don't carry `tenant_id` at all, so wiring either onto a
+    multi-tenant `TenantScopedCorpus` today risks real cross-tenant
+    leakage, not just a missed filter.
 30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
     billing-ready usage metering.
 31. ⬜ Semantic/result cache with tenant-scoped invalidation.

@@ -28,6 +28,25 @@ _RANGE_OPS = {
 }
 
 
+def tenant_id_from_filter(filters: Filter | None) -> str | None:
+    """Extracts a plain-string tenant_id value from `filters`, if present
+    — alongside whatever else is in `filters`, unlike a narrower
+    "this-key-only" extraction (e.g. ragcore.retrieval.hybrid's own
+    source_id pushdown), since a tenant_id value is always safe to use
+    as an *additional* narrowing constraint no matter what else the
+    caller filtered on. Shared by every retrieval layer that reads its
+    own auxiliary store (HybridRetriever's lexical channel,
+    HierarchyRetriever's node candidates) and can push tenant_id down to
+    that store directly, rather than relying solely on matches_filter()
+    post-filtering the hydrated result (which still runs regardless, so
+    this is a recall/performance narrowing, never the sole correctness
+    mechanism — see docs/ARCHITECTURE.md Phase 7 gap item 28a)."""
+    if not filters or "tenant_id" not in filters:
+        return None
+    value = filters["tenant_id"]
+    return value if isinstance(value, str) else None
+
+
 def matches_filter(meta: ChunkMeta, filters: Filter | None) -> bool:
     if not filters:
         return True

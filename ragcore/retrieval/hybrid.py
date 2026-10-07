@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Sequence
 from ragcore.embedding.base import Embedder
 from ragcore.lexical.base import LexicalStore
 from ragcore.retrieval._filters import matches_filter
+from ragcore.retrieval._filters import tenant_id_from_filter as _tenant_id_from_filter
 from ragcore.retrieval.scoring import cosine_score
 from ragcore.stores.base import VectorStore
 from ragcore.types import Chunk, Filter, Retrieved
@@ -50,19 +51,6 @@ def _source_ids_from_filter(filters: Filter | None) -> Sequence[str] | None:
     if isinstance(value, (list, tuple, set)):
         return list(value)
     return [value]
-
-
-def _tenant_id_from_filter(filters: Filter | None) -> str | None:
-    """Unlike _source_ids_from_filter, this doesn't require tenant_id to
-    be the *only* key — a tenant_id value is always safe to push down to
-    the lexical store's own SQL alongside whatever else is in `filters`
-    (ragcore.lexical.base.LexicalStore.search's docstring), narrowing the
-    candidate pool before the Python post-filter runs rather than relying
-    on the post-filter alone for correctness at this stage."""
-    if not filters or "tenant_id" not in filters:
-        return None
-    value = filters["tenant_id"]
-    return value if isinstance(value, str) else None
 
 
 class HybridRetriever:
