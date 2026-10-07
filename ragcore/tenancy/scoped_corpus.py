@@ -64,6 +64,16 @@ class TenantScopedCorpus:
         self.corpus = corpus
         self.tenant_id = tenant_id
 
+    @property
+    def generator(self) -> Generator | None:
+        """Delegates to the wrapped `Corpus.generator` — a `Generator`
+        is shared infrastructure (a model client), not per-tenant data,
+        so there is nothing for this wrapper to scope here. Lets a
+        caller check `scoped.generator is None` the same way it would
+        check `corpus.generator is None`, without reaching through
+        `.corpus` itself (e.g. `server/app/main.py`'s `/ask` handler)."""
+        return self.corpus.generator
+
     # -- ingestion -----------------------------------------------------
 
     def ingest(

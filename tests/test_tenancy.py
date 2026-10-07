@@ -33,6 +33,17 @@ def test_rejects_an_empty_tenant_id() -> None:
         TenantScopedCorpus(corpus, "")
 
 
+def test_generator_property_delegates_to_the_wrapped_corpus() -> None:
+    corpus = Corpus(InMemoryStore(dim=8), FakeEmbedder(dim=8))
+    scoped = TenantScopedCorpus(corpus, "tenant-a")
+    assert scoped.generator is None
+
+    from tests.fakes import FakeGenerator
+
+    corpus.generator = FakeGenerator()
+    assert scoped.generator is corpus.generator
+
+
 def test_ingest_tags_every_chunk_with_the_bound_tenant_id(md_book: Path) -> None:
     corpus = Corpus(InMemoryStore(dim=8), FakeEmbedder(dim=8))
     scoped = TenantScopedCorpus(corpus, "tenant-a")
