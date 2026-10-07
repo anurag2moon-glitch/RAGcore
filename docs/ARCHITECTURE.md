@@ -350,8 +350,10 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   same opt-in shape). Usage metering — ✅ `server/app/usage.py`
   (`GET /usage`, request counts per tenant — deliberately scoped to
   counts, not token/cost, since this server shares one embedder across
-  every tenant; see that module's own docstring). JWT/OAuth, RBAC,
-  per-tenant quotas — ⬜, still open.
+  every tenant; see that module's own docstring). Per-tenant quotas —
+  ✅ `server/app/quota.py` (`RAGCORE_TENANT_QUOTAS`, lifetime-total
+  caps, `402` when exceeded, reuses the usage meter's own counts).
+  JWT/OAuth, RBAC — ⬜, still open; everything else in item 30 is done.
 - ✅ Semantic/result cache with tenant-scoped invalidation —
   `ragcore.caching` (`ResultCache` protocol, `InMemoryResultCache`
   default, `CachingRetriever` decorator). `invalidate(tenant_id=...)` is
@@ -654,8 +656,9 @@ else (28b, 30+) still from scratch.**
 30. 🟡 API keys — ✅ `server/app/auth.py` (commit 707cd52). Rate
     limiting — ✅ `server/app/rate_limit.py` (commit f219ba6). Usage
     metering — ✅ `server/app/usage.py` (commit 62859c2), request
-    counts only, not token/cost. JWT/OAuth, RBAC, per-tenant quotas —
-    ⬜, still open.
+    counts only, not token/cost. Per-tenant quotas — ✅
+    `server/app/quota.py` (commit cf78bb5), lifetime-total, not
+    period-based. JWT/OAuth, RBAC — ⬜, still open.
 31. ✅ Semantic/result cache with tenant-scoped invalidation —
     `ragcore.caching` (commit 9ac827f).
 32. 🟡 Data lifecycle — ✅ hard delete:
