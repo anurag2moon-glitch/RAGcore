@@ -9,8 +9,17 @@ pipeline) — the same extra every other structured-LLM-output component
 in this codebase already needs.
 """
 
+from ragcore.rules.base import (
+    CandidateSpan,
+    RuleCandidateDetector,
+    RuleExtractor,
+    RuleStore,
+    RuleVerifier,
+    VerificationResult,
+)
 from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
 from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
+from ragcore.rules.sqlite_store import SqliteRuleStore
 from ragcore.rules.types import (
     ConditionGroup,
     Effect,
@@ -23,6 +32,7 @@ from ragcore.rules.types import (
 )
 
 __all__ = [
+    "CandidateSpan",
     "ConditionGroup",
     "DomainPack",
     "Effect",
@@ -32,7 +42,13 @@ __all__ = [
     "Remedy",
     "ReviewStatus",
     "Rule",
+    "RuleCandidateDetector",
+    "RuleExtractor",
+    "RuleStore",
     "RuleType",
+    "RuleVerifier",
+    "SqliteRuleStore",
+    "VerificationResult",
     "evaluate_condition",
     "match_rules",
     "rule_content_hash",
