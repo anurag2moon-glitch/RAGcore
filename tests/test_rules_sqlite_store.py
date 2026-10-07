@@ -1,7 +1,7 @@
 """SqliteRuleStore: add_rules idempotency, get/rules_for_book/
 rules_for_domain, the supersede immutable-version-on-edit discipline
-(the old row's content is never touched, only a bookkeeping flag), and
-per-chapter checkpointing — Phase 10 §1/§4.
+(the old row's content is never touched, only a bookkeeping flag),
+per-chapter checkpointing, and conflict storage — Phase 10 §1/§3/§4.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from ragcore.errors import RagcoreError
+from ragcore.rules.consistency import find_duplicates
 from ragcore.rules.sqlite_store import SqliteRuleStore
 from ragcore.rules.types import Effect, FactPredicate, Rule, rule_content_hash
 
@@ -194,6 +195,44 @@ def test_a_failed_chapter_can_later_succeed_and_checkpoint() -> None:
     store.mark_chapter_failed(source_id="book1", context_group_id="ch1", fingerprint="fp1", error="boom")
     store.mark_chapter_done(source_id="book1", context_group_id="ch1", fingerprint="fp1")
     assert store.checkpoint("book1", "ch1") == "fp1"
+
+
+# -- conflicts --------------------------------------------------------------
+
+
+def test_put_conflicts_then_conflicts_for_rule_finds_it_from_either_side() -> None:
+    store = SqliteRuleStore(":memory:")
+    r1, r2 = _rule(book_id="b1"), _rule(book_id="b2")
+    store.add_rules([r1, r2])
+    conflicts = find_duplicates([r1, r2])
+
+    store.put_conflicts(conflicts)
+
+    assert [c.conflict_id for c in store.conflicts_for_rule(r1.rule_id)] == [conflicts[0].conflict_id]
+    assert [c.conflict_id for c in store.conflicts_for_rule(r2.rule_id)] == [conflicts[0].conflict_id]
+
+
+def test_conflicts_for_an_untouched_rule_is_empty() -> None:
+    store = SqliteRuleStore(":memory:")
+    assert store.conflicts_for_rule("rule:nonexistent") == []
+
+
+def test_put_conflicts_is_idempotent_by_content_addressed_id() -> None:
+    store = SqliteRuleStore(":memory:")
+    r1, r2 = _rule(book_id="b1"), _rule(book_id="b2")
+    store.add_rules([r1, r2])
+    conflicts = find_duplicates([r1, r2])
+
+    store.put_conflicts(conflicts)
+    store.put_conflicts(conflicts)  # re-insert identical conflicts
+
+    assert len(store.conflicts_for_rule(r1.rule_id)) == 1
+
+
+def test_put_conflicts_with_an_empty_sequence_is_a_no_op() -> None:
+    store = SqliteRuleStore(":memory:")
+    store.put_conflicts([])
+    assert store.conflicts_for_rule("anything") == []
 
 
 # -- backup/restore --------------------------------------------------------

@@ -22,6 +22,14 @@ from ragcore.rules.claude import (
     ClaudeRuleExtractor,
     ClaudeRuleVerifier,
 )
+from ragcore.rules.consistency import (
+    RuleConflict,
+    detect_conflicts,
+    find_contradictions,
+    find_duplicates,
+    find_exceptions,
+    resolve_precedence,
+)
 from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
 from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
 from ragcore.rules.ocr_quality import is_low_quality_ocr
@@ -57,6 +65,7 @@ __all__ = [
     "ReviewStatus",
     "Rule",
     "RuleCandidateDetector",
+    "RuleConflict",
     "RuleExtractionProgress",
     "RuleExtractionReport",
     "RuleExtractor",
@@ -66,9 +75,14 @@ __all__ = [
     "SqliteRuleStore",
     "VerificationResult",
     "build_rules",
+    "detect_conflicts",
     "evaluate_condition",
+    "find_contradictions",
+    "find_duplicates",
+    "find_exceptions",
     "is_low_quality_ocr",
     "match_rules",
+    "resolve_precedence",
     "rule_content_hash",
     "validate_facts",
 ]

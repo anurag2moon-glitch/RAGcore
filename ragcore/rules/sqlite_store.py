@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Sequence
 
 from ragcore.errors import RagcoreError, wrap_backend_errors
+from ragcore.rules.consistency import RuleConflict
 from ragcore.rules.types import Rule
 
 _SCHEMA = """
@@ -42,6 +43,17 @@ CREATE TABLE IF NOT EXISTS rules (
 CREATE INDEX IF NOT EXISTS idx_rules_book ON rules(book_id);
 CREATE INDEX IF NOT EXISTS idx_rules_domain ON rules(domain);
 CREATE INDEX IF NOT EXISTS idx_rules_latest ON rules(is_latest);
+
+CREATE TABLE IF NOT EXISTS rule_conflicts (
+    conflict_id TEXT PRIMARY KEY,
+    conflict_type TEXT NOT NULL,
+    rule_id_a TEXT NOT NULL,
+    rule_id_b TEXT NOT NULL,
+    rationale TEXT NOT NULL,
+    winning_rule_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_rule_conflicts_a ON rule_conflicts(rule_id_a);
+CREATE INDEX IF NOT EXISTS idx_rule_conflicts_b ON rule_conflicts(rule_id_b);
 
 CREATE TABLE IF NOT EXISTS rule_runs (
     source_id TEXT NOT NULL,
@@ -149,6 +161,46 @@ class SqliteRuleStore:
                 raise
             else:
                 self._conn.execute("COMMIT")
+
+    # -- conflicts (Phase 10 §3) --
+
+    @wrap_backend_errors
+    def put_conflicts(self, conflicts: Sequence[RuleConflict]) -> None:
+        if not conflicts:
+            return
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for conflict in conflicts:
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO rule_conflicts "
+                        "(conflict_id, conflict_type, rule_id_a, rule_id_b, rationale, winning_rule_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            conflict.conflict_id, conflict.conflict_type, conflict.rule_ids[0],
+                            conflict.rule_ids[1], conflict.rationale, conflict.winning_rule_id,
+                        ),
+                    )
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+            else:
+                self._conn.execute("COMMIT")
+
+    @wrap_backend_errors
+    def conflicts_for_rule(self, rule_id: str) -> list[RuleConflict]:
+        rows = self._conn.execute(
+            "SELECT conflict_id, conflict_type, rule_id_a, rule_id_b, rationale, winning_rule_id "
+            "FROM rule_conflicts WHERE rule_id_a = ? OR rule_id_b = ?",
+            (rule_id, rule_id),
+        ).fetchall()
+        return [
+            RuleConflict(
+                conflict_id=row[0], conflict_type=row[1], rule_ids=(row[2], row[3]),
+                rationale=row[4], winning_rule_id=row[5],
+            )
+            for row in rows
+        ]
 
     # -- checkpointing (per-chapter, same shape as every other extraction layer) --
 

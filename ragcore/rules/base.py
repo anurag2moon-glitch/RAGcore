@@ -13,6 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, Sequence, runtime_checkable
 
+from ragcore.rules.consistency import RuleConflict
 from ragcore.rules.domain import DomainPack
 from ragcore.rules.types import Rule
 from ragcore.types import Chunk
@@ -117,6 +118,20 @@ class RuleStore(Protocol):
         bookkeeping flag — the one and only mutation this store ever
         applies to an existing row, and never to the row's own rule
         content. `new_rule.supersedes` must equal `old_rule_id`."""
+        ...
+
+    def put_conflicts(self, conflicts: Sequence[RuleConflict]) -> None:
+        """Merge by content-addressed conflict_id (insert-if-absent) —
+        "never silently overwrite" (Phase 10 §3). Safe as a plain
+        insert-or-ignore because a conflict's own fields are a pure
+        function of the two rule_ids and conflict_type baked into its
+        id — re-detecting the same conflict always reproduces
+        identical content, never a differing one that an overwrite
+        could lose."""
+        ...
+
+    def conflicts_for_rule(self, rule_id: str) -> list[RuleConflict]:
+        """Every conflict touching this rule, in either position."""
         ...
 
     def checkpoint(self, source_id: str, context_group_id: str) -> str | None: ...
