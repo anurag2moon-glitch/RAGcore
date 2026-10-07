@@ -407,19 +407,31 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   gives the Python SDK one.
 - ⬜ gRPC, Docker/Helm/k8s manifests, Redis, feature flags, load tests
   (Locust/k6) — none of this exists yet.
-- 🟡 Backup/restore runbook — the *mechanism* exists per-store
-  (`backup_to`/`restore_from_backup`/snapshot/restore, Phase 1/`versioning/`)
-  and the server above gives a real process to restart against a restored
-  file, but there's still no written runbook describing the combined
-  procedure end to end.
+- ✅ **Backup/restore runbook** — `docs/RUNBOOK.md`, researched directly
+  against the code and its test suite (exact file/line sourced for
+  every claim). Documents the real `create_snapshot()`/`rollback()`
+  orchestration, LanceDB's actual non-destructive tag/restore
+  semantics, and five real gaps the library doesn't automate (the
+  `IngestionManifest` itself has no restore path; ingest checkpoint
+  stores are excluded entirely; the cross-store sequence isn't atomic;
+  `rollback()` must be called with the same stores `create_snapshot()`
+  had or a store is silently skipped; retention only prunes LanceDB
+  tags).
 
-### Phase 9 — Docs
-🟡 `CLAUDE.md` + `README.md` are unusually thorough as *decision logs*, but
-there is **no ADR directory before this pass**, no Mermaid system diagram,
-no formal data-model reference (beyond `types.py` docstrings), no
-configuration reference, no runbook, no cookbook of worked per-downstream-
-project examples (though `scripts/*_demo.py` are close to cookbook material
-already).
+### Phase 9 — Docs — 🟡 ADR backfill + runbook started (2026-10-07)
+- ✅ ADR backfill (3 of likely several more worth adding later) —
+  `docs/adr/0009-library-not-application.md`,
+  `0010-content-addressed-identity.md`, `0011-graph-merge-not-replace.md`,
+  each explicitly marked "backfilled" with today's date rather than
+  claiming retroactive authorship.
+- ✅ Runbook — `docs/RUNBOOK.md` (backup/restore; see Phase 8 item 38
+  above for what it covers).
+- 🟡 `CLAUDE.md` + `README.md` are unusually thorough as *decision logs*,
+  and the ADR directory now exists with 11 entries, but there is still
+  no Mermaid system diagram, no formal data-model reference (beyond
+  `types.py` docstrings), no configuration reference, no cookbook of
+  worked per-downstream-project examples (though `scripts/*_demo.py`
+  are close to cookbook material already).
 
 ## 3. What's fragile
 
@@ -634,12 +646,22 @@ still from scratch.**
     (`sdk/typescript/`, commit 2ba96e6) — ✅. gRPC — ⬜, still open.
 36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
 37. ⬜ Load tests (Locust/k6).
-38. ⬜ Backup/restore runbook (the mechanism already exists per-store;
-    only the written procedure is missing).
+38. ✅ Backup/restore runbook — `docs/RUNBOOK.md`, commit eff4b1c.
 39. ⬜ Multi-tenant HTTP routing on top of `server/` — gated on Phase 7
     item 30 (API keys/JWT/RBAC) existing first, per ADR 0008.
 
-**Phase 9 (docs):** ADR backfill for major decisions already made (this
-pass seeds `docs/adr/0001-...`); Mermaid architecture diagram; cookbook
-promoted from the existing `scripts/*_demo.py` files, which are already
-most of the way there.
+**Phase 9 (docs): items 40/41 in progress, everything else (42+) open.**
+40. 🟡 ADR backfill for major decisions already made — 3 done
+    (commit a9aebaf: `0009` library-not-application, `0010`
+    content-addressed identity, `0011` graph merge-not-replace), likely
+    several more worth adding later (RRF fusion, the synthetic-chunk
+    convention, the SQLite WAL+lock pattern are candidates — not
+    attempted yet).
+41. ✅ Runbook — `docs/RUNBOOK.md` (same as Phase 8 item 38 above; one
+    piece of work, tracked under both since it closes a gap named in
+    each phase's own list).
+42. ⬜ Mermaid architecture diagram.
+43. ⬜ Formal data-model reference (beyond `types.py`'s own docstrings).
+44. ⬜ Configuration reference.
+45. ⬜ Cookbook promoted from the existing `scripts/*_demo.py` files,
+    which are already most of the way there.
