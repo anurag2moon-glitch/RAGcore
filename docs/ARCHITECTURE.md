@@ -21,10 +21,13 @@ by default; 10 more opt-in via `pytest -m "live or gutenberg"`).
 Zero `TODO`/`FIXME`/`XXX` markers anywhere in the package — every
 `except Exception` is deliberate and `# noqa`-annotated with a reason. This
 is a carefully, incrementally built codebase, not a prototype; **Phase 1-6
-of the target spec are substantially (not fully) covered already**, Phase
-7 has its named foundation step done (`tenant_id` on `ChunkMeta` +
-`LanceDBStore`) with everything else in it still open, and Phase 8 does
-not exist at all. See §2 for the precise breakdown.
+of the target spec are substantially (not fully) covered already**,
+Phase 7 is done for everything tractable as library code (tenant_id
+foundation + enforcement, hard-delete, semantic caching, PII/
+prompt-injection defenses, licensing flags — what's left needs either a
+real server/auth context or is a deliberately deferred design question),
+and Phase 8 has its first piece (a reference FastAPI server, `server/`)
+started. See §2 for the precise breakdown.
 
 `CLAUDE.md` (31KB) already functions as a living, detailed design-decision
 log — far more detailed than typical repo docs — covering nearly every
@@ -371,12 +374,28 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   exists yet; both need an actual request/server context (Phase 8)
   this library doesn't have.
 
-### Phase 8 — API, SDKs, deployment
-⬜ **Entirely absent.** No FastAPI/any HTTP server, no OpenAPI spec, no
-gRPC, no generated SDKs, no MCP server, no Docker/Helm/k8s manifests, no
-Redis, no feature flags, no load tests, no backup/restore runbook (though
-the *mechanism* for backup/restore exists per-store — `backup_to`/
-`restore_from_backup`/snapshot/restore — just no runbook describing it).
+### Phase 8 — API, SDKs, deployment — 🟡 FastAPI service started (2026-10-07), everything else still open
+- ✅ **Reference FastAPI server** — `server/` (sibling package to
+  `ragcore/`, own `pyproject.toml`, zero new dependencies added to
+  `ragcore`'s own — see `docs/adr/0008-api-server-as-sibling-package.md`).
+  `GET /health`, `POST /ingest` (real multipart upload), `POST /retrieve`,
+  `POST /ask`, `GET /sources`, `DELETE /sources/{source_id}`.
+  Single-tenant, **no auth** — deliberate, not an oversight: see ADR 0008
+  for why multi-tenant HTTP routing isn't attempted until an actual auth
+  mechanism (Phase 7 item 30) exists.
+- ✅ **OpenAPI spec** — free once the server above exists; FastAPI
+  generates it automatically from the route/model definitions
+  (`server/app/main.py`/`server/app/models.py`), visit `/docs`. No
+  separate authoring pass was needed — the gap list named this as if it
+  were independent work, it isn't.
+- ⬜ gRPC, generated Python/TypeScript SDKs, MCP server, Docker/Helm/k8s
+  manifests, Redis, feature flags, load tests (Locust/k6) — none of this
+  exists yet.
+- 🟡 Backup/restore runbook — the *mechanism* exists per-store
+  (`backup_to`/`restore_from_backup`/snapshot/restore, Phase 1/`versioning/`)
+  and the server above gives a real process to restart against a restored
+  file, but there's still no written runbook describing the combined
+  procedure end to end.
 
 ### Phase 9 — Docs
 🟡 `CLAUDE.md` + `README.md` are unusually thorough as *decision logs*, but
@@ -590,9 +609,17 @@ else (28b, 30+) still from scratch.**
     709b9d4). Encryption at rest/in transit, audit logs — ⬜, still
     open; both need a real request/server context (Phase 8).
 
-**Phase 8 (API/SDK/deployment):** everything, from scratch, after Phase 7's
-tenancy model is settled (an API surface built before tenant_id exists would
-need rework).
+**Phase 8 (API/SDK/deployment): item 34 done, everything else (35+)
+still from scratch.**
+34. ✅ Reference FastAPI server (`server/`) + its free OpenAPI spec —
+    commit 41b0bec. See `docs/adr/0008-api-server-as-sibling-package.md`.
+35. ⬜ gRPC, generated Python/TypeScript SDKs, MCP server.
+36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
+37. ⬜ Load tests (Locust/k6).
+38. ⬜ Backup/restore runbook (the mechanism already exists per-store;
+    only the written procedure is missing).
+39. ⬜ Multi-tenant HTTP routing on top of `server/` — gated on Phase 7
+    item 30 (API keys/JWT/RBAC) existing first, per ADR 0008.
 
 **Phase 9 (docs):** ADR backfill for major decisions already made (this
 pass seeds `docs/adr/0001-...`); Mermaid architecture diagram; cookbook
