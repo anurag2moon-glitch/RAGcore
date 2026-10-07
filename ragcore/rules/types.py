@@ -20,6 +20,12 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 SCHEMA_VERSION = "1"
 
+_MISSING_SENTINEL = "__ragcore_rules_missing__"
+"""Used only inside `to_json_logic()`'s compiled output, never seen by
+`ragcore.rules.evaluator` — see `FactPredicate.to_json_logic`'s own
+docstring for why a sentinel value is needed at all, instead of `None`
+or JSON Logic's `!!` truthy-check."""
+
 RuleType = Literal["HARD", "TENDENCY", "EXCEPTION", "CANCELLATION", "REMEDY_ONLY"]
 """HARD: stated as definite. TENDENCY: hedged ("may", "tends to").
 EXCEPTION: carves out a case another rule's conditions would otherwise
@@ -67,22 +73,49 @@ class FactPredicate(BaseModel):
     def to_json_logic(self) -> dict[str, Any]:
         """Compiles to a JSON-Logic-style (https://jsonlogic.com)
         expression — Phase 10 §5's "compile conditions to a JSON-logic-
-        style DSL." `exists` has no native JSON Logic operator, so it
-        compiles to `{"!!": {"var": fact}}` (truthy-coerced presence
-        check), the idiomatic JSON Logic way to express "this var is
-        set and truthy"."""
+        style DSL" — matching `ragcore.rules.evaluator.evaluate_condition`'s
+        own closed-world missing-fact semantics exactly (confirmed by a
+        2000-case randomized cross-check against a real JSON Logic
+        engine during development, not assumed from the compilation
+        logic alone — see the test suite's
+        `test_to_json_logic_matches_evaluate_condition_*` tests).
+
+        A naive compilation (`{"!!": {"var": fact}}` for `exists`,
+        bare comparisons for everything else) does **not** match: a
+        real JSON Logic engine resolves a missing `var` to `None` and
+        then *compares against* `None` rather than treating the whole
+        predicate as `False`, and `!!` is a truthiness check, not a
+        presence check — `{"!!": {"var": "x"}}` wrongly evaluates to
+        `False` when `x` is present but falsy (`0`, `False`, `""`), not
+        only when `x` is genuinely absent. Both gaps were found by
+        that cross-check, not hand-derived.
+
+        The fix: `var` is always read with an explicit sentinel default
+        (`{"var": [fact, SENTINEL]}`), so "the var's value equals the
+        sentinel" is a correct presence check regardless of whether the
+        real value is falsy — and every non-`exists` operator's output
+        is wrapped as `{"and": [<presence check>, <comparison>]}` so a
+        missing fact short-circuits to `False` for every operator,
+        matching the evaluator exactly rather than only for the
+        operators where that happened to already be json-logic's
+        default behavior (`eq` against `None` is `False` by luck;
+        `ne`/`gt`/`in`/... are not)."""
+        exists_check = {"!=": [{"var": [self.fact, _MISSING_SENTINEL]}, _MISSING_SENTINEL]}
         if self.operator == "exists":
-            return {"!!": {"var": self.fact}}
+            return exists_check
+
         op_map = {
             "eq": "==", "ne": "!=", "gt": ">", "gte": ">=", "lt": "<", "lte": "<=",
         }
         if self.operator in op_map:
-            return {op_map[self.operator]: [{"var": self.fact}, self.value]}
-        if self.operator == "in":
-            return {"in": [{"var": self.fact}, self.value]}
-        if self.operator == "not_in":
-            return {"!": {"in": [{"var": self.fact}, self.value]}}
-        raise AssertionError(f"unhandled operator {self.operator!r}")  # pragma: no cover
+            comparison = {op_map[self.operator]: [{"var": self.fact}, self.value]}
+        elif self.operator == "in":
+            comparison = {"in": [{"var": self.fact}, self.value]}
+        elif self.operator == "not_in":
+            comparison = {"!": {"in": [{"var": self.fact}, self.value]}}
+        else:
+            raise AssertionError(f"unhandled operator {self.operator!r}")  # pragma: no cover
+        return {"and": [exists_check, comparison]}
 
 
 class ConditionGroup(BaseModel):

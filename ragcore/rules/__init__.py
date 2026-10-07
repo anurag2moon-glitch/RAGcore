@@ -10,6 +10,7 @@ in this codebase already needs.
 """
 
 from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
+from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
 from ragcore.rules.types import (
     ConditionGroup,
     Effect,
@@ -32,5 +33,8 @@ __all__ = [
     "ReviewStatus",
     "Rule",
     "RuleType",
+    "evaluate_condition",
+    "match_rules",
     "rule_content_hash",
+    "validate_facts",
 ]

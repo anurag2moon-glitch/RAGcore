@@ -1,13 +1,32 @@
 """ragcore.rules.types: the rule schema's validators, JSON Logic
 compilation, and content-addressed rule_content_hash — Phase 10 §1.
+
+JSON Logic compilation is tested behaviorally, against a *real* JSON
+Logic engine (`json-logic-qubit`, imported as `json_logic`) rather than
+by asserting an exact compiled shape — a brittle test that would break
+on any internal recompilation change without catching an actual
+semantic bug, which is exactly what matters here. This found two real
+bugs during development, not hypothetically: `{"!!": {"var": fact}}`
+for `exists` is a *truthiness* check, not a *presence* check (wrongly
+`False` when the fact is present but falsy — `0`, `False`, `""`), and
+a bare comparison operator against a missing fact followed json-logic's
+own null-propagation rules instead of ragcore's deliberately
+conservative "missing fact -> predicate is False" semantics (see
+`FactPredicate.to_json_logic`'s own docstring for the fix). Both are
+regression-tested here via the real engine, not just asserted fixed.
 """
 
 from __future__ import annotations
 
+import random
+
 import pytest
+from json_logic import jsonLogic
 from pydantic import ValidationError
 
+from ragcore.rules.evaluator import evaluate_condition
 from ragcore.rules.types import (
+    Condition,
     ConditionGroup,
     Effect,
     FactPredicate,
@@ -74,35 +93,46 @@ def test_fact_predicate_exists_needs_no_value() -> None:
     assert pred.value is None
 
 
-@pytest.mark.parametrize(
-    ("operator", "expected"),
-    [
-        ("eq", {"==": [{"var": "x"}, 1]}),
-        ("ne", {"!=": [{"var": "x"}, 1]}),
-        ("gt", {">": [{"var": "x"}, 1]}),
-        ("gte", {">=": [{"var": "x"}, 1]}),
-        ("lt", {"<": [{"var": "x"}, 1]}),
-        ("lte", {"<=": [{"var": "x"}, 1]}),
-    ],
-)
-def test_fact_predicate_json_logic_comparison_operators(operator: str, expected: dict) -> None:
-    pred = FactPredicate(fact="x", operator=operator, value=1)
-    assert pred.to_json_logic() == expected
+@pytest.mark.parametrize("operator", ["eq", "ne", "gt", "gte", "lt", "lte"])
+def test_fact_predicate_json_logic_comparison_matches_real_engine_when_present(operator: str) -> None:
+    pred = FactPredicate(fact="x", operator=operator, value=5)
+    for x in (3, 5, 7):
+        facts = {"x": x}
+        assert jsonLogic(pred.to_json_logic(), facts) == evaluate_condition(pred, facts)
 
 
-def test_fact_predicate_json_logic_in() -> None:
+@pytest.mark.parametrize("operator", ["eq", "ne", "gt", "gte", "lt", "lte"])
+def test_fact_predicate_json_logic_comparison_is_false_when_missing(operator: str) -> None:
+    pred = FactPredicate(fact="x", operator=operator, value=5)
+    assert jsonLogic(pred.to_json_logic(), {}) is False
+    assert evaluate_condition(pred, {}) is False
+
+
+def test_fact_predicate_json_logic_in_matches_real_engine() -> None:
     pred = FactPredicate(fact="x", operator="in", value=[1, 2, 3])
-    assert pred.to_json_logic() == {"in": [{"var": "x"}, [1, 2, 3]]}
+    assert jsonLogic(pred.to_json_logic(), {"x": 2}) == evaluate_condition(pred, {"x": 2})
+    assert jsonLogic(pred.to_json_logic(), {"x": 9}) == evaluate_condition(pred, {"x": 9})
+    assert jsonLogic(pred.to_json_logic(), {}) is False
 
 
-def test_fact_predicate_json_logic_not_in() -> None:
+def test_fact_predicate_json_logic_not_in_matches_real_engine() -> None:
     pred = FactPredicate(fact="x", operator="not_in", value=[1, 2])
-    assert pred.to_json_logic() == {"!": {"in": [{"var": "x"}, [1, 2]]}}
+    assert jsonLogic(pred.to_json_logic(), {"x": 9}) == evaluate_condition(pred, {"x": 9})
+    assert jsonLogic(pred.to_json_logic(), {"x": 1}) == evaluate_condition(pred, {"x": 1})
+    assert jsonLogic(pred.to_json_logic(), {}) is False
 
 
-def test_fact_predicate_json_logic_exists() -> None:
+def test_fact_predicate_json_logic_exists_is_a_presence_check_not_a_truthiness_check() -> None:
+    """The specific bug found during development: `{"!!": {"var": x}}`
+    (truthiness) wrongly says "doesn't exist" for a present-but-falsy
+    fact. The fix must say the fact exists for every one of these."""
     pred = FactPredicate(fact="x", operator="exists")
-    assert pred.to_json_logic() == {"!!": {"var": "x"}}
+    for falsy_value in (0, False, ""):
+        facts = {"x": falsy_value}
+        assert jsonLogic(pred.to_json_logic(), facts) is True
+        assert evaluate_condition(pred, facts) is True
+    assert jsonLogic(pred.to_json_logic(), {}) is False
+    assert evaluate_condition(pred, {}) is False
 
 
 # -- ConditionGroup -----------------------------------------------------
@@ -124,20 +154,22 @@ def test_condition_group_and_requires_at_least_one_child() -> None:
         ConditionGroup(op="and", children=[])
 
 
-def test_condition_group_json_logic_and() -> None:
+def test_condition_group_json_logic_and_matches_real_engine() -> None:
     group = ConditionGroup(
         op="and",
         children=[FactPredicate(fact="a", operator="exists"), FactPredicate(fact="b", operator="exists")],
     )
-    assert group.to_json_logic() == {"and": [{"!!": {"var": "a"}}, {"!!": {"var": "b"}}]}
+    for facts in ({"a": 1, "b": 1}, {"a": 1}, {}):
+        assert jsonLogic(group.to_json_logic(), facts) == evaluate_condition(group, facts)
 
 
-def test_condition_group_json_logic_not() -> None:
-    group = ConditionGroup(op="not", children=[FactPredicate(fact="a", operator="exists")])
-    assert group.to_json_logic() == {"!": {"!!": {"var": "a"}}}
+def test_condition_group_json_logic_not_matches_real_engine() -> None:
+    group = ConditionGroup(op="not", children=[FactPredicate(fact="a", operator="eq", value=1)])
+    for facts in ({"a": 1}, {"a": 2}, {}):
+        assert jsonLogic(group.to_json_logic(), facts) == evaluate_condition(group, facts)
 
 
-def test_condition_group_json_logic_is_recursive() -> None:
+def test_condition_group_json_logic_is_recursive_and_matches_real_engine() -> None:
     nested = ConditionGroup(
         op="or",
         children=[
@@ -145,9 +177,8 @@ def test_condition_group_json_logic_is_recursive() -> None:
             FactPredicate(fact="b", operator="eq", value=1),
         ],
     )
-    assert nested.to_json_logic() == {
-        "or": [{"and": [{"!!": {"var": "a"}}]}, {"==": [{"var": "b"}, 1]}]
-    }
+    for facts in ({"a": 1}, {"b": 1}, {}, {"a": 0}):
+        assert jsonLogic(nested.to_json_logic(), facts) == evaluate_condition(nested, facts)
 
 
 def test_condition_round_trips_through_json() -> None:
@@ -157,6 +188,47 @@ def test_condition_round_trips_through_json() -> None:
     group = _cond()
     parsed = ConditionGroup.model_validate_json(group.model_dump_json())
     assert parsed.to_json_logic() == group.to_json_logic()
+
+
+def test_to_json_logic_matches_evaluate_condition_randomized() -> None:
+    """A randomized cross-check between the compiled JSON Logic output
+    (run through a real JSON Logic engine) and
+    ragcore.rules.evaluator.evaluate_condition, across random condition
+    trees and fact sets including falsy values (0, False) — the exact
+    methodology that found both bugs this module's docstring describes,
+    kept as a permanent regression test rather than a one-off
+    development check."""
+    rng = random.Random(42)
+
+    def random_predicate() -> FactPredicate:
+        op = rng.choice(["eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "exists"])
+        fact = rng.choice(["a", "b", "c"])
+        if op == "exists":
+            return FactPredicate(fact=fact, operator=op)
+        if op in ("in", "not_in"):
+            return FactPredicate(fact=fact, operator=op, value=rng.sample(range(10), 3))
+        return FactPredicate(fact=fact, operator=op, value=rng.randint(0, 10))
+
+    def random_condition(depth: int = 0) -> Condition:
+        if depth >= 2 or rng.random() < 0.4:
+            return random_predicate()
+        op = rng.choice(["and", "or", "not"])
+        n = 1 if op == "not" else rng.choice([2, 3])
+        return ConditionGroup(op=op, children=[random_condition(depth + 1) for _ in range(n)])
+
+    def random_facts() -> dict:
+        facts = {}
+        for k in ["a", "b", "c"]:
+            if rng.random() < 0.8:
+                facts[k] = rng.choice([0, rng.randint(0, 10), False])
+        return facts
+
+    for _ in range(1000):
+        cond = random_condition()
+        facts = random_facts()
+        assert evaluate_condition(cond, facts) == bool(jsonLogic(cond.to_json_logic(), facts)), (
+            f"mismatch for {cond.model_dump()} against {facts}"
+        )
 
 
 # -- Effect / Remedy ------------------------------------------------------
