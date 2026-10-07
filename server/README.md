@@ -88,6 +88,22 @@ Visit `/docs` for the interactive OpenAPI UI (generated automatically
 by FastAPI from `app/main.py`'s routes and `app/models.py`'s Pydantic
 models — no separate authoring step).
 
+### Rules (Phase 10, optional)
+
+```
+export RAGCORE_RULES_DB_PATH=./data/rules.sqlite3
+```
+
+The `/rules/*` routes (`app/rules_routes.py`) need this set, and need
+a domain pack registered (empty by default — zero hard dependency on
+any specific pack, e.g. Lal Kitab) via
+`app.dependency_overrides[get_domain_pack_registry]`; `/rules/extract`
+additionally needs `get_rule_extraction_pipeline` overridden with a
+real `ClaudeRuleCandidateDetector`/`Extractor`/`Verifier` triple (`503`
+until configured). In multi-tenant mode, every route filters to global
+rules plus only the calling tenant's own private ones — enforced here,
+in the route layer, not inside `RuleStore` itself.
+
 ## Test
 
 ```
@@ -111,6 +127,12 @@ overridden with in-memory test doubles via FastAPI's
 | `GET` | `/sources` | — | |
 | `DELETE` | `/sources/{source_id}` | — | `403` in multi-tenant mode if the source belongs to another tenant |
 | `GET` | `/usage` | — | your own request counts per endpoint; `400` in single-tenant mode |
+| `GET` | `/rules` | — | `?domain=...&book_id=...` |
+| `POST` | `/rules/match` | `{domain, facts, book_id, include_unverified}` | |
+| `POST` | `/rules/{rule_id}/approve` | `{reviewer, reason}` | mutates `review_status` in place |
+| `POST` | `/rules/{rule_id}/reject` | `{reviewer, reason}` | reason required |
+| `POST` | `/rules/{rule_id}/edit` | `{reviewer, reason, effect, confidence, remedy}` | creates a new version |
+| `POST` | `/rules/extract` | — | `?domain=...&source_id=...`; `404` with no domain pack registered, `503` with no extraction pipeline configured |
 
 Every route except `/health` returns `401` in multi-tenant mode if the
 request has no valid API key, and (except `/usage` itself) `429` if

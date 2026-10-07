@@ -190,15 +190,63 @@ measured on structureless random vectors, a worst case for IVF-PQ/HNSW
 — representative of throughput/latency, not of recall against real
 embeddings.
 
+## Phase 10: rule extraction and the Lal Kitab rule base
+
+**`domains/lal_kitab/examples/demo.py`** — lives in the
+`domains/lal_kitab/` sibling package, not `scripts/` (every script
+under `scripts/` is deliberately free of any sibling-package
+dependency; this one needs the Lal Kitab domain pack, so it lives
+alongside it). No API calls: builds two `Rule`s directly from raw Lal
+Kitab mentions via the real `LalKitabOntologyNormalizer` — the exact
+normalization step `ClaudeRuleExtractor` calls internally, just
+without the LLM call in front of it — then runs the real
+`ragcore.rules.consistency`/`serving` layers against them.
+
+```
+cd domains/lal_kitab
+source .venv/bin/activate   # or: pip install -e "..[generation]" -e ".[dev]"
+python examples/demo.py
+```
+
+Re-run directly against this exact commit before being written up
+here, same as every other entry in this file. What it prints, and why
+it's the interesting part: a general rule ("Mars in the 8th house
+causes health trouble") and an `EXCEPTION` rule narrowing it ("...
+unless Mars is retrograde") both get built from their own raw-mention
+triples, `detect_conflicts()` finds the exception relationship between
+them and records `winning_rule_id` as the exception rule, and
+`match_with_provenance()` then shows the *effective* answer flipping
+correctly between two charts — only the exception survives when Mars
+actually is retrograde, only the general rule survives when it isn't.
+That's the whole point of Phase 10 §3/§5's conflict/precedence
+machinery, shown with two real rules rather than described abstractly.
+
+For the extraction pipeline itself (the parts this demo intentionally
+skips — `ClaudeRuleCandidateDetector`/`Extractor`/`Verifier`, which do
+need `ANTHROPIC_API_KEY`), see `ragcore/rules/claude.py` and
+`ragcore/rules/pipeline.py::build_rules`; for the hand-labeled 3-chapter
+gold set this domain's own CI regression gate runs against, see
+`domains/lal_kitab/tests/gold.py` and `test_eval_gold.py`; for the
+ontology a new domain pack would need to implement to plug into this
+same pipeline, see `docs/RULES_ONTOLOGY.md`.
+
+The four REST/MCP operations (`list_rules`/`match_rules`/`review_rule`/
+`extract_rules`) are exercised the same way the rest of this cookbook's
+server/SDK examples are — see the next section.
+
 ## Reference HTTP/MCP servers and SDKs
 
 Not scripts, but worked examples in their own right — each sibling
 package's own README has the exact run/test commands:
 
-- `server/README.md` — the reference FastAPI server.
-- `mcp-server/README.md` — the MCP server.
+- `server/README.md` — the reference FastAPI server (also:
+  `list_rules`/`match_rules`/`review_rule`/`extract_rules` under `/rules`,
+  Phase 10 §8).
+- `mcp-server/README.md` — the MCP server (same four rule tools).
 - `sdk/python/README.md`, `sdk/typescript/README.md` — the two client
-  SDKs, each with a complete usage example.
+  SDKs, each with a complete usage example (`list_rules`/`match_rules`/
+  `approve_rule`/`reject_rule`/`edit_rule`/`extract_rules`, same
+  camelCase/snake_case mapping as everything else in each SDK).
 
 ## Fetching real test fixtures
 

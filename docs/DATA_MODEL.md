@@ -210,6 +210,108 @@ an old gold set. `RetrievalMetrics` (`recall_at_k`/`precision_at_k`/
 | `ragcore.injection.types` | `InjectionSpan` / `InjectionMatch` / `InjectionScanReport` | Same shape as the PII types above, over `pattern: str` instead of `pii_type`. |
 | `ragcore.tenancy.types` | `TenantDeletionReport` | `tenant_id: str`, `source_ids: tuple[str, ...]`, `chunks_deleted: int` — returned by `TenantScopedCorpus.hard_delete()`. |
 
+## Phase 10: rules (`ragcore/rules/types.py`, `base.py`, `consistency.py`, `review.py`, `packs.py`, `eval.py`)
+
+Pydantic `BaseModel`s, not frozen dataclasses (the one place this
+layer's shape differs from the rest of this file) — `SCHEMA_VERSION`
+versioned, JSON Schema-exportable per Phase 10 §1's own requirement.
+See `docs/adr/0013-rule-extraction-domain-pluggable-architecture.md`
+for the architecture and `docs/RULES_ONTOLOGY.md` for how a domain
+pack supplies the vocabulary these types' `fact`/`value` fields
+actually use.
+
+### `Condition` — `FactPredicate | ConditionGroup` (discriminated union on `kind`)
+
+| Type | Field | Notes |
+|---|---|---|
+| `FactPredicate` | `fact: str` | Open-vocabulary dotted key (e.g. `"planet.mars.house"`) — a domain pack's `fact_types()` defines the real taxonomy. |
+| | `operator` | `Literal["eq","ne","in","not_in","gt","gte","lt","lte","exists"]`. |
+| | `value: Any = None` | Required unless `operator == "exists"`. |
+| `ConditionGroup` | `op` | `Literal["and","or","not"]`. |
+| | `children: list[Condition]` | `not` requires exactly 1; `and`/`or` require ≥1. |
+
+Both have `to_json_logic()` (Phase 10 §5's JSON-Logic-style DSL
+compilation — see that method's own docstring for the closed-world
+missing-fact semantics it preserves, cross-checked against a real
+engine, not assumed).
+
+### `Effect`
+
+| Field | Type |
+|---|---|
+| `category` | `str` |
+| `polarity` | `Literal["positive","negative","neutral"]` |
+| `magnitude` | `float \| None = None` |
+| `timing` | `str \| None = None` |
+
+### `Remedy`
+
+| Field | Type |
+|---|---|
+| `action` | `str` |
+| `object` / `day` / `duration` / `prohibition` | `str \| None = None` |
+
+### `Rule`
+
+| Field | Type | Notes |
+|---|---|---|
+| `rule_id` | `str` | `rule_content_hash(domain, book_id, verbatim_span, conditions, effect)` — deliberately excludes `chapter`/`page_start`/`chunk_ids`/`remedy`/`confidence`/`rule_type`, so the same rule restated elsewhere collapses to one id. **Not** reused for a human edit — see `ragcore.rules.review`'s own module docstring for why that needs a different, finer-grained hash. |
+| `domain` / `pack_id` / `pack_version` | `str` | |
+| `book_id` / `chapter` / `page_start` / `page_end` | `str` / `str \| None` / `int` / `int \| None` | `page_start` must be ≥1. |
+| `chunk_ids` | `tuple[str, ...]` | Non-empty. |
+| `verbatim_span` | `str` | Non-empty — "no span, no rule." |
+| `conditions` | `Condition` | |
+| `effect` | `Effect` | |
+| `remedy` | `Remedy \| None = None` | |
+| `rule_type` | `RuleType` | `Literal["HARD","TENDENCY","EXCEPTION","CANCELLATION","REMEDY_ONLY"]`. |
+| `depends_on` / `overrides` / `conflicts_with` | `tuple[str, ...] = ()` | Declared rule-to-rule links (distinct from the *detected* `RuleConflict` records below). |
+| `confidence` | `float` | `0..1`. |
+| `extraction_model` / `extraction_version` | `str` | |
+| `review_status` | `ReviewStatus = "auto"` | `Literal["auto","verified","rejected"]` — workflow metadata, **not** a `rule_content_hash` input; see `ragcore.rules.review`. |
+| `tenant_scope` / `tenant_id` | `Literal["global","tenant"] = "global"` / `str \| None` | Validated consistent (`tenant` requires an id; `global` must not carry one). |
+| `version` / `supersedes` | `int = 1` / `str \| None` | Validated consistent (`v1` has no `supersedes`; `v>1` must). |
+| `created_at` | `str` | |
+
+### `RuleConflict` (`ragcore.rules.consistency`, a plain frozen dataclass)
+
+| Field | Type | Notes |
+|---|---|---|
+| `conflict_id` | `str` | `sha256(conflict_type:rule_a:rule_b)`. |
+| `conflict_type` | `Literal["duplicate","contradiction","exception"]` | |
+| `rule_ids` | `tuple[str, str]` | Sorted for duplicate/contradiction (symmetric); `(general, exception)` order for exception. |
+| `rationale` | `str` | |
+| `winning_rule_id` | `str \| None` | Set for exception (definitional); for contradiction only when the two sides genuinely differ in specificity (never happens from `find_contradictions` alone — see that function's own docstring). |
+
+### `ReviewAuditEntry` (`ragcore.rules.review`, a plain frozen dataclass)
+
+| Field | Type | Notes |
+|---|---|---|
+| `entry_id` | `str` | |
+| `rule_id` | `str` | The rule acted upon — for `"edited"`, the *old* id. |
+| `action` | `Literal["approved","rejected","edited"]` | |
+| `reviewer` / `reason` / `created_at` | `str` | |
+| `new_rule_id` | `str \| None = None` | Only for `"edited"`. |
+
+### `RulePackBundle` (`ragcore.rules.packs`, a plain frozen dataclass)
+
+| Field | Type |
+|---|---|
+| `pack_id` / `pack_version` / `domain` | `str` |
+| `tenant_scope` | `Literal["global","tenant"]` |
+| `tenant_id` | `str \| None` |
+| `rules` | `tuple[Rule, ...]` |
+| `exported_at` / `schema_version` | `str` |
+
+### Eval gold types (`ragcore.rules.eval`, plain frozen dataclasses)
+
+`GoldRule` (`gold_id`/`chunk_id`/`conditions`/`effect`), `GoldVerification`
+(`rule_id`/`human_supported: bool`), `GoldConflictPair` (`gold_id_a`/
+`gold_id_b`/`conflict_type`), `RuleEvalReport` (every Phase 10 §6
+metric — `recall`/`precision`/`condition_accuracy`/`effect_accuracy`/
+`verifier_agreement_rate`/`hallucination_rate`/`conflict_detection_recall`,
+each `float | None`, `None` meaning "no gold input supplied to measure
+this").
+
 ## Server / SDK JSON projections
 
 `server/app/models.py` and both SDKs' `types.py`/`types.ts` are
@@ -217,3 +319,11 @@ an old gold set. `RetrievalMetrics` (`recall_at_k`/`precision_at_k`/
 `server/app/models.py`'s own module docstring. `RetrievedChunkResponse`
 exposes 8 of `ChunkMeta`'s ~20 fields; extend it as a real client's
 needs become concrete, not speculatively ahead of that.
+
+`server/app/rules_models.py` (and the matching `RuleInfo`/
+`MatchRulesResult`/`ExtractRulesResult` types in both SDKs) is the same
+kind of projection for `Rule`/`RuleConflict` — `RuleResponse` serializes
+`conditions`/`effect`/`remedy` as plain JSON dicts
+(`.model_dump()`), not a typed nested structure the SDKs re-validate,
+since a client consuming matched rules generally wants to read them,
+not reconstruct a `Condition` tree client-side.

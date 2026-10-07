@@ -22,6 +22,20 @@ for (const chunk of await client.retrieve("what is contextual retrieval?", { k: 
 }
 ```
 
+### Rules (Phase 10)
+
+```typescript
+const rules = await client.listRules("lal_kitab", "my_book");
+
+const result = await client.matchRules("lal_kitab", { "planet.mars.house": 8 });
+for (const rule of result.effective) {
+  console.log(rule.ruleId, rule.effect);
+}
+
+await client.approveRule(rules[0].ruleId, "alice", "checked against the source");
+await client.editRule(rules[0].ruleId, "alice", "fix confidence", { confidence: 0.9 });
+```
+
 ## Test
 
 ```
