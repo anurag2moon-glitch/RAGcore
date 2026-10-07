@@ -13,6 +13,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "python-multipart>=0.0.9",
+    "pydantic-settings>=2.6",
 ]
 # ragcore itself is a sibling-package dependency, not declared here: a
 # relative `file://../` direct reference isn't portable across pip's

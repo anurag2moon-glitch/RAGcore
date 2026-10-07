@@ -14,3 +14,11 @@ samples/
 tests/integration/.cache/
 tests/integration/.gutenberg_cache/
 tests/integration/artifacts/
+
+# Deployment: never commit real secrets/config, only *.env.example
+.env
+.env.*
+!.env.example
+!*/.env.example
+server/data/
+server/alembic/versions/__pycache__/

@@ -16,24 +16,22 @@ pyproject.toml deliberately does not depend on domains/lal_kitab.
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 
 from fastapi import Depends, HTTPException
 
+from app.settings import get_settings
 from ragcore.rules.base import RuleCandidateDetector, RuleExtractor, RuleVerifier
 from ragcore.rules.domain import DomainPack
 from ragcore.rules.sqlite_store import SqliteRuleStore
 
-RAGCORE_RULES_DB_PATH_ENV = "RAGCORE_RULES_DB_PATH"
-
 
 @lru_cache(maxsize=1)
 def _rule_store_singleton() -> SqliteRuleStore:
-    db_path = os.environ.get(RAGCORE_RULES_DB_PATH_ENV)
+    db_path = get_settings().ragcore_rules_db_path
     if not db_path:
         raise RuntimeError(
-            f"{RAGCORE_RULES_DB_PATH_ENV} must be set to the on-disk SQLite path "
+            "RAGCORE_RULES_DB_PATH must be set to the on-disk SQLite path "
             "this server should open for rule storage (e.g. ./data/rules.sqlite3)"
         )
     return SqliteRuleStore(db_path)

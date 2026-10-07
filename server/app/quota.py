@@ -19,44 +19,22 @@ other opt-in piece of this server uses.
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 
 from fastapi import Depends, HTTPException
 
 from app.auth import get_tenant_id
+from app.env_parsing import parse_int_quotas
+from app.settings import get_settings
 from app.usage import InMemoryUsageMeter, get_usage_meter
-
-RAGCORE_TENANT_QUOTAS_ENV = "RAGCORE_TENANT_QUOTAS"
-
-
-def _parse_quotas_env(value: str) -> dict[str, int]:
-    quotas: dict[str, int] = {}
-    for pair in value.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        tenant_id, _, limit_str = pair.partition(":")
-        if not tenant_id or not limit_str:
-            raise RuntimeError(
-                f"{RAGCORE_TENANT_QUOTAS_ENV} entry {pair!r} is not in 'tenant_id:limit' form"
-            )
-        try:
-            limit = int(limit_str)
-        except ValueError:
-            raise RuntimeError(
-                f"{RAGCORE_TENANT_QUOTAS_ENV} entry {pair!r} has a non-integer limit"
-            ) from None
-        quotas[tenant_id] = limit
-    return quotas
 
 
 @lru_cache(maxsize=1)
 def _tenant_quotas_singleton() -> dict[str, int]:
-    raw = os.environ.get(RAGCORE_TENANT_QUOTAS_ENV)
-    if not raw:
+    settings = get_settings()
+    if not settings.ragcore_tenant_quotas:
         return {}
-    return _parse_quotas_env(raw)
+    return parse_int_quotas(settings.ragcore_tenant_quotas, env_var="RAGCORE_TENANT_QUOTAS")
 
 
 def get_tenant_quotas() -> dict[str, int]:

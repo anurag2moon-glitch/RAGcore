@@ -18,13 +18,13 @@ a valid key is rejected, and every operation is scoped through
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 from typing import Protocol, runtime_checkable
 
 from fastapi import Depends, HTTPException, Request
 
-RAGCORE_API_KEYS_ENV = "RAGCORE_API_KEYS"
+from app.env_parsing import parse_colon_pairs
+from app.settings import get_settings
 
 
 @runtime_checkable
@@ -49,28 +49,12 @@ class InMemoryApiKeyStore:
         return self._keys.get(api_key)
 
 
-def _parse_api_keys_env(value: str) -> dict[str, str]:
-    """`"key1:tenant-a,key2:tenant-b"` -> `{"key1": "tenant-a", "key2": "tenant-b"}`."""
-    keys: dict[str, str] = {}
-    for pair in value.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        key, _, tenant_id = pair.partition(":")
-        if not key or not tenant_id:
-            raise RuntimeError(
-                f"{RAGCORE_API_KEYS_ENV} entry {pair!r} is not in 'key:tenant_id' form"
-            )
-        keys[key] = tenant_id
-    return keys
-
-
 @lru_cache(maxsize=1)
 def _api_key_store_singleton() -> ApiKeyStore | None:
-    raw = os.environ.get(RAGCORE_API_KEYS_ENV)
-    if not raw:
+    settings = get_settings()
+    if not settings.ragcore_api_keys:
         return None
-    return InMemoryApiKeyStore(_parse_api_keys_env(raw))
+    return InMemoryApiKeyStore(parse_colon_pairs(settings.ragcore_api_keys, env_var="RAGCORE_API_KEYS"))
 
 
 def get_api_key_store() -> ApiKeyStore | None:

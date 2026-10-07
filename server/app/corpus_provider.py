@@ -10,24 +10,22 @@ vars, so tests never need real Voyage/LanceDB credentials.
 
 from __future__ import annotations
 
-import os
 from functools import lru_cache
 
 from fastapi import Depends
 
 from app.auth import get_tenant_id
+from app.settings import get_settings
 from ragcore.corpus import Corpus
 from ragcore.tenancy import TenantScopedCorpus
-
-RAGCORE_DB_PATH_ENV = "RAGCORE_DB_PATH"
 
 
 @lru_cache(maxsize=1)
 def _corpus_singleton() -> Corpus:
-    db_path = os.environ.get(RAGCORE_DB_PATH_ENV)
+    db_path = get_settings().ragcore_db_path
     if not db_path:
         raise RuntimeError(
-            f"{RAGCORE_DB_PATH_ENV} must be set to the on-disk LanceDB path "
+            "RAGCORE_DB_PATH must be set to the on-disk LanceDB path "
             "this server should open (e.g. ./data/corpus.lancedb)"
         )
     return Corpus.open(db_path)

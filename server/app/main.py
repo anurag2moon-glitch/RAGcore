@@ -31,6 +31,7 @@ from app.models import (
 from app.quota import enforce_quota
 from app.rate_limit import enforce_rate_limit
 from app.rules_routes import router as rules_router
+from app.settings import get_settings
 from app.usage import get_my_usage, record_usage
 from ragcore.corpus import Corpus
 from ragcore.errors import RagcoreError, TenancyError
@@ -39,6 +40,15 @@ from ragcore.tenancy import TenantScopedCorpus
 logger = logging.getLogger("ragcore_server")
 
 ScopedCorpus = Corpus | TenantScopedCorpus
+
+# Fail fast: validates every setting (malformed RAGCORE_API_KEYS/
+# RAGCORE_TENANT_QUOTAS/.../a non-postgresql:// DATABASE_URL/a non-
+# redis:// REDIS_URL/...) the moment this module is imported - i.e.
+# the moment `uvicorn app.main:app` starts - rather than on whichever
+# future request first happens to touch the broken field. Every field
+# has a safe default, so this never fails in a test process (which
+# sets nothing) or in local dev with no .env at all.
+get_settings()
 
 app = FastAPI(
     title="ragcore reference server",

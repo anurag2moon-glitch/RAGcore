@@ -1,7 +1,8 @@
-"""Per-tenant quotas: _parse_quotas_env, enforce_quota's boundary
-(allowed exactly up to the limit, rejected after), isolation between
-tenants, and that quota and /usage can never disagree since both read
-the same InMemoryUsageMeter.
+"""Per-tenant quotas: enforce_quota's boundary (allowed exactly up to
+the limit, rejected after), isolation between tenants, and that quota
+and /usage can never disagree since both read the same
+InMemoryUsageMeter. parse_int_quotas's own parsing edge cases are
+covered once, in test_env_parsing.py, not duplicated here.
 """
 
 from __future__ import annotations
@@ -10,29 +11,12 @@ import pytest
 from app.auth import InMemoryApiKeyStore, get_api_key_store
 from app.corpus_provider import get_corpus
 from app.main import app
-from app.quota import _parse_quotas_env, get_tenant_quotas
+from app.quota import get_tenant_quotas
 from app.usage import InMemoryUsageMeter, get_usage_meter
 from fakes import FakeEmbedder, InMemoryStore
 from fastapi.testclient import TestClient
 
 from ragcore.corpus import Corpus
-
-
-def test_parse_quotas_env() -> None:
-    assert _parse_quotas_env("tenant-a:1000,tenant-b:5000") == {
-        "tenant-a": 1000,
-        "tenant-b": 5000,
-    }
-
-
-def test_parse_quotas_env_rejects_a_malformed_entry() -> None:
-    with pytest.raises(RuntimeError, match="not in 'tenant_id:limit' form"):
-        _parse_quotas_env("no-colon-here")
-
-
-def test_parse_quotas_env_rejects_a_non_integer_limit() -> None:
-    with pytest.raises(RuntimeError, match="non-integer limit"):
-        _parse_quotas_env("tenant-a:not-a-number")
 
 
 @pytest.fixture

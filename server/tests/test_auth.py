@@ -10,8 +10,9 @@ from __future__ import annotations
 import io
 
 import pytest
-from app.auth import InMemoryApiKeyStore, _parse_api_keys_env, get_api_key_store
+from app.auth import InMemoryApiKeyStore, get_api_key_store
 from app.corpus_provider import get_corpus
+from app.env_parsing import parse_colon_pairs
 from app.main import app
 from fakes import FakeEmbedder, InMemoryStore
 from fastapi.testclient import TestClient
@@ -35,15 +36,15 @@ def auth_client() -> TestClient:
 
 
 def test_parse_api_keys_env() -> None:
-    assert _parse_api_keys_env("key1:tenant-a,key2:tenant-b") == {
+    assert parse_colon_pairs("key1:tenant-a,key2:tenant-b", env_var="RAGCORE_API_KEYS") == {
         "key1": "tenant-a",
         "key2": "tenant-b",
     }
 
 
 def test_parse_api_keys_env_rejects_a_malformed_entry() -> None:
-    with pytest.raises(RuntimeError, match="not in 'key:tenant_id' form"):
-        _parse_api_keys_env("no-colon-here")
+    with pytest.raises(RuntimeError, match="not in 'left:right' form"):
+        parse_colon_pairs("no-colon-here", env_var="RAGCORE_API_KEYS")
 
 
 def test_missing_api_key_returns_401(auth_client: TestClient) -> None:

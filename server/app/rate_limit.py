@@ -16,7 +16,6 @@ case.
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from dataclasses import dataclass
@@ -25,8 +24,7 @@ from functools import lru_cache
 from fastapi import Depends, HTTPException, Request
 
 from app.auth import get_tenant_id
-
-RAGCORE_RATE_LIMIT_PER_MINUTE_ENV = "RAGCORE_RATE_LIMIT_PER_MINUTE"
+from app.settings import get_settings
 
 
 @dataclass
@@ -69,10 +67,10 @@ class InMemoryRateLimiter:
 
 @lru_cache(maxsize=1)
 def _rate_limiter_singleton() -> InMemoryRateLimiter | None:
-    raw = os.environ.get(RAGCORE_RATE_LIMIT_PER_MINUTE_ENV)
-    if not raw:
+    settings = get_settings()
+    if settings.ragcore_rate_limit_per_minute is None:
         return None
-    return InMemoryRateLimiter(int(raw))
+    return InMemoryRateLimiter(settings.ragcore_rate_limit_per_minute)
 
 
 def get_rate_limiter() -> InMemoryRateLimiter | None:
