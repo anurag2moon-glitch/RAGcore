@@ -30,6 +30,7 @@ from app.models import (
 )
 from app.quota import enforce_quota
 from app.rate_limit import enforce_rate_limit
+from app.rules_routes import router as rules_router
 from app.usage import get_my_usage, record_usage
 from ragcore.corpus import Corpus
 from ragcore.errors import RagcoreError, TenancyError
@@ -48,6 +49,8 @@ app = FastAPI(
     ),
     version="0.1.0",
 )
+
+app.include_router(rules_router)
 
 
 @app.exception_handler(TenancyError)
