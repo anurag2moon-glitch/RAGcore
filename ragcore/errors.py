@@ -41,6 +41,14 @@ class GenerationError(RagcoreError):
     limit exhausted after retries)."""
 
 
+class TenancyError(RagcoreError):
+    """Raised by ragcore.tenancy.TenantScopedCorpus when a caller's own
+    tenant_id (in a filter, or an explicit ingest/retrieve argument)
+    conflicts with the tenant the scoped corpus was constructed for, or
+    when an operation would touch a chunk/source that doesn't belong to
+    that tenant."""
+
+
 def wrap_backend_errors(fn: F) -> F:
     """Decorator for a storage-layer class's public methods: catches any
     exception the method raises and re-raises it as
