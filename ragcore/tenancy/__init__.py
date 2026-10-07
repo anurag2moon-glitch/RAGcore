@@ -12,5 +12,6 @@ than silently ignoring a caller-supplied value that disagrees with it.
 """
 
 from ragcore.tenancy.scoped_corpus import TenantScopedCorpus
+from ragcore.tenancy.types import TenantDeletionReport
 
-__all__ = ["TenantScopedCorpus"]
+__all__ = ["TenantDeletionReport", "TenantScopedCorpus"]

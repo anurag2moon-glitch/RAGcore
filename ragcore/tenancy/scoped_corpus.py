@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 from ragcore.errors import TenancyError
+from ragcore.tenancy.types import TenantDeletionReport
 from ragcore.types import Chunk, Filter, IngestProgress, IngestReport, Retrieved, SourceInfo
 
 if TYPE_CHECKING:
@@ -169,6 +170,65 @@ class TenantScopedCorpus:
 
     def count(self) -> int:
         return sum(info.chunk_count for info in self.sources())
+
+    def hard_delete(
+        self,
+        *,
+        graph_store: Any = None,
+        concept_store: Any = None,
+        claim_store: Any = None,
+        context_store: Any = None,
+        hierarchy_store: Any = None,
+        lexical_store: Any = None,
+    ) -> TenantDeletionReport:
+        """Deletes every one of this tenant's chunks from the vector
+        store, plus every row derived from them in whichever optional
+        auxiliary stores a caller actually passes — `Corpus` itself
+        holds no reference to a graph/concept/claim/context/hierarchy/
+        lexical store (those are built and held externally, see
+        `CLAUDE.md`), so this method can't discover them on its own.
+
+        Reuses each store's own existing `remove_source()` (or, for
+        `lexical_store`, `delete(source_id=...)`) completely unchanged —
+        no new removal logic, no schema change, anywhere. That's what
+        makes this safe for `graph_store`/`concept_store` too, despite
+        their content-addressed entity/relation/concept ids not being
+        tenant-scoped (`docs/adr/0007-tenant-id-on-remaining-stores-two-tiers.md`):
+        removing a chunk_id's association from an entity/concept only
+        ever subtracts *this* tenant's own provenance from a row — it
+        cannot touch another tenant's association with that same row,
+        even one sharing the same id, because `remove_source`/
+        `remove_chunk_ids` key strictly off chunk_id, never off the
+        entity/concept id's own merged content. An entity/concept is
+        only ever deleted outright once every chunk_id referencing it
+        (from any tenant) is gone, which is the same "no other tenant
+        was ever involved to begin with" case a single-tenant deployment
+        already relies on.
+
+        Source enumeration is this tenant's own (`self.sources()`), so a
+        store holding other tenants' data untouched by this call is
+        guaranteed by construction, not by trusting each store's own
+        `remove_source` to filter correctly."""
+        source_ids = tuple(info.source_id for info in self.sources())
+        chunks_deleted = sum(self.corpus.remove(source_id) for source_id in source_ids)
+
+        for store in (graph_store, concept_store, claim_store, context_store, hierarchy_store):
+            if store is None:
+                continue
+            for source_id in source_ids:
+                store.remove_source(source_id)
+
+        if lexical_store is not None:
+            for source_id in source_ids:
+                lexical_store.delete(source_id=source_id)
+
+        logger.info(
+            "hard_delete: tenant=%r removed %d sources, %d chunks",
+            self.tenant_id, len(source_ids), chunks_deleted,
+        )
+        return TenantDeletionReport(
+            tenant_id=self.tenant_id, source_ids=source_ids, chunks_deleted=chunks_deleted
+        )
 
     # -- internal ----------------------------------------------------------
 

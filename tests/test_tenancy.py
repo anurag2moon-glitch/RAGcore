@@ -11,6 +11,8 @@ import pytest
 
 from ragcore.corpus import Corpus
 from ragcore.errors import TenancyError
+from ragcore.graph.sqlite_store import SqliteGraphStore
+from ragcore.graph.types import Entity
 from ragcore.tenancy import TenantScopedCorpus
 from tests.fakes import FakeEmbedder, InMemoryStore
 
@@ -160,3 +162,73 @@ def test_remove_deletes_this_tenants_own_source(md_book: Path) -> None:
 
     assert deleted > 0
     assert corpus.count() == 0
+
+
+def test_hard_delete_removes_this_tenants_vector_chunks_only(md_book: Path, tmp_path: Path) -> None:
+    corpus, book_a, book_b = _two_tenant_corpus(md_book, tmp_path)
+    scoped_a = TenantScopedCorpus(corpus, "tenant-a")
+    scoped_b = TenantScopedCorpus(corpus, "tenant-b")
+    scoped_a.ingest(book_a)
+    scoped_b.ingest(book_b)
+
+    report = scoped_a.hard_delete()
+
+    assert report.tenant_id == "tenant-a"
+    assert report.chunks_deleted > 0
+    assert corpus.count() == scoped_b.count()
+    assert all(c.meta.tenant_id == "tenant-b" for c in corpus.store.all_chunks())
+
+
+def test_hard_delete_is_safe_against_a_tier_2_shared_entity_id(
+    md_book: Path, tmp_path: Path
+) -> None:
+    """Simulates the exact danger docs/adr/0007 names: two tenants whose
+    extraction both produce the same content-addressed entity_id (e.g.
+    two "John Smith" entities, normalized identically). hard_delete for
+    one tenant must remove only *its own* chunk_id's association with
+    that shared row, leaving the other tenant's association and the row
+    itself (since it's still referenced) untouched."""
+    corpus, book_a, book_b = _two_tenant_corpus(md_book, tmp_path)
+    scoped_a = TenantScopedCorpus(corpus, "tenant-a")
+    scoped_b = TenantScopedCorpus(corpus, "tenant-b")
+    report_a = scoped_a.ingest(book_a)
+    report_b = scoped_b.ingest(book_b)
+
+    chunk_a = next(c.chunk_id for c in corpus.store.get_by_source(report_a.source_ids[0]))
+    chunk_b = next(c.chunk_id for c in corpus.store.get_by_source(report_b.source_ids[0]))
+
+    graph_store = SqliteGraphStore(tmp_path / "graph.sqlite")
+    shared_id = "entity:person:john-smith"
+    graph_store.add_entities([Entity(entity_id=shared_id, name="John Smith", entity_type="person", source_chunk_ids=(chunk_a,))])
+    graph_store.add_entities([Entity(entity_id=shared_id, name="John Smith", entity_type="person", source_chunk_ids=(chunk_b,))])
+    [merged] = graph_store.entities_by_type("person")
+    assert set(merged.source_chunk_ids) == {chunk_a, chunk_b}
+
+    scoped_a.hard_delete(graph_store=graph_store)
+
+    remaining = graph_store.entities_by_type("person")
+    assert len(remaining) == 1
+    assert remaining[0].entity_id == shared_id
+    assert remaining[0].source_chunk_ids == (chunk_b,)  # tenant-a's association gone, tenant-b's intact
+
+
+def test_hard_delete_wipes_an_auxiliary_lexical_store_scoped_to_this_tenant(
+    md_book: Path, tmp_path: Path
+) -> None:
+    from ragcore.lexical.fts5 import Fts5LexicalStore
+
+    corpus, book_a, book_b = _two_tenant_corpus(md_book, tmp_path)
+    scoped_a = TenantScopedCorpus(corpus, "tenant-a")
+    scoped_b = TenantScopedCorpus(corpus, "tenant-b")
+    report_a = scoped_a.ingest(book_a)
+    report_b = scoped_b.ingest(book_b)
+
+    lexical = Fts5LexicalStore(tmp_path / "lexical.sqlite")
+    lexical.index(corpus.store.get_by_source(report_a.source_ids[0]))
+    lexical.index(corpus.store.get_by_source(report_b.source_ids[0]))
+    assert lexical.count() > 0
+    count_before = lexical.count()
+
+    scoped_a.hard_delete(lexical_store=lexical)
+
+    assert 0 < lexical.count() < count_before
