@@ -23,7 +23,19 @@ from typing import Any, Callable
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server.corpus_provider import get_corpus
+from mcp_server.rules_provider import (
+    get_domain_pack_registry,
+    get_rule_extraction_pipeline,
+    get_rule_store,
+)
 from ragcore.corpus import Corpus
+from ragcore.rules.base import RuleCandidateDetector, RuleExtractor, RuleVerifier
+from ragcore.rules.domain import DomainPack
+from ragcore.rules.pipeline import build_rules
+from ragcore.rules.review import ReviewQueue
+from ragcore.rules.serving import match_with_provenance
+from ragcore.rules.sqlite_store import SqliteRuleStore
+from ragcore.rules.types import Effect, Remedy, Rule
 from ragcore.types import Retrieved
 
 
@@ -40,10 +52,40 @@ def _chunk_to_dict(r: Retrieved) -> dict[str, Any]:
     }
 
 
-def build_server(*, corpus_provider: Callable[[], Corpus] = get_corpus) -> MCPServer:
+def _rule_to_dict(rule: Rule) -> dict[str, Any]:
+    return {
+        "rule_id": rule.rule_id,
+        "domain": rule.domain,
+        "book_id": rule.book_id,
+        "chapter": rule.chapter,
+        "page_start": rule.page_start,
+        "verbatim_span": rule.verbatim_span,
+        "normalized_statement": rule.normalized_statement,
+        "conditions": rule.conditions.model_dump(),
+        "effect": rule.effect.model_dump(),
+        "remedy": rule.remedy.model_dump() if rule.remedy else None,
+        "rule_type": rule.rule_type,
+        "confidence": rule.confidence,
+        "review_status": rule.review_status,
+        "version": rule.version,
+    }
+
+
+def build_server(
+    *,
+    corpus_provider: Callable[[], Corpus] = get_corpus,
+    rule_store_provider: Callable[[], SqliteRuleStore] = get_rule_store,
+    domain_pack_registry_provider: Callable[[], dict[str, DomainPack]] = get_domain_pack_registry,
+    rule_extraction_pipeline_provider: Callable[
+        [], tuple[RuleCandidateDetector, RuleExtractor, RuleVerifier]
+    ] = get_rule_extraction_pipeline,
+) -> MCPServer:
     server = MCPServer(
         "ragcore",
-        description="Single-tenant access to one ragcore.Corpus: ingest, retrieve, ask, list sources.",
+        description=(
+            "Single-tenant access to one ragcore.Corpus and its rule base: "
+            "ingest, retrieve, ask, list sources, extract/list/match/review rules."
+        ),
     )
 
     @server.tool()
@@ -95,6 +137,96 @@ def build_server(*, corpus_provider: Callable[[], Corpus] = get_corpus) -> MCPSe
             }
             for s in corpus.sources()
         ]
+
+    @server.tool()
+    def list_rules(domain: str, book_id: str | None = None) -> list[dict[str, Any]]:
+        """List rules for a domain (optionally scoped to one book)."""
+        store = rule_store_provider()
+        rules = store.rules_for_book(book_id) if book_id is not None else store.rules_for_domain(domain)
+        return [_rule_to_dict(r) for r in rules if r.domain == domain]
+
+    @server.tool()
+    def match_rules(
+        domain: str,
+        facts: dict[str, Any],
+        book_id: str | None = None,
+        include_unverified: bool = False,
+    ) -> dict[str, Any]:
+        """Match a fact set against this domain's rules, grouped by
+        conflict/precedence. Only verified rules are served by default
+        (Phase 10 §4)."""
+        store = rule_store_provider()
+        pool = store.rules_for_book(book_id) if book_id is not None else store.rules_for_domain(domain)
+        pool = [r for r in pool if r.domain == domain]
+        result = match_with_provenance(pool, facts, store=store, include_unverified=include_unverified)
+        return {
+            "matched": [
+                {
+                    "rule": _rule_to_dict(m.rule),
+                    "is_overridden": m.is_overridden,
+                    "overrides": list(m.overrides),
+                }
+                for m in result.matched
+            ],
+            "effective": [_rule_to_dict(r) for r in result.effective],
+        }
+
+    @server.tool()
+    def review_rule(
+        rule_id: str,
+        action: str,
+        reviewer: str,
+        reason: str = "",
+        effect: dict[str, Any] | None = None,
+        confidence: float | None = None,
+        remedy: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Approve, reject, or edit a rule (action: "approve" | "reject"
+        | "edit"). Edit accepts any of effect/confidence/remedy as
+        overrides and always creates a new version
+        (ragcore.rules.review's immutable-version-on-edit discipline)."""
+        store = rule_store_provider()
+        queue = ReviewQueue(store)
+        if action == "approve":
+            rule = queue.approve(rule_id, reviewer=reviewer, reason=reason)
+        elif action == "reject":
+            rule = queue.reject(rule_id, reviewer=reviewer, reason=reason)
+        elif action == "edit":
+            overrides: dict[str, Any] = {}
+            if effect is not None:
+                overrides["effect"] = Effect.model_validate(effect)
+            if confidence is not None:
+                overrides["confidence"] = confidence
+            if remedy is not None:
+                overrides["remedy"] = Remedy.model_validate(remedy)
+            rule = queue.edit(rule_id, reviewer=reviewer, reason=reason, **overrides)
+        else:
+            raise ValueError(f"action must be 'approve', 'reject', or 'edit', got {action!r}")
+        return _rule_to_dict(rule)
+
+    @server.tool()
+    def extract_rules(domain: str, source_id: str | None = None) -> dict[str, Any]:
+        """Run the 3-pass extraction pipeline (detect/extract/verify)
+        over this corpus (optionally scoped to one source) for
+        `domain`, storing every verified rule."""
+        corpus = corpus_provider()
+        store = rule_store_provider()
+        registry = domain_pack_registry_provider()
+        domain_pack = registry.get(domain)
+        if domain_pack is None:
+            raise ValueError(f"no domain pack registered for domain {domain!r} (registered: {sorted(registry)})")
+        detector, extractor, verifier = rule_extraction_pipeline_provider()
+        source_ids = [source_id] if source_id is not None else None
+        report = build_rules(corpus, store, detector, extractor, verifier, domain_pack, source_ids=source_ids)
+        return {
+            "chapters_processed": report.chapters_processed,
+            "chapters_skipped": report.chapters_skipped,
+            "candidates_detected": report.candidates_detected,
+            "rules_extracted": report.rules_extracted,
+            "rules_stored": report.rules_stored,
+            "rules_rejected_unsupported": report.rules_rejected_unsupported,
+            "errors": list(report.errors),
+        }
 
     return server
 

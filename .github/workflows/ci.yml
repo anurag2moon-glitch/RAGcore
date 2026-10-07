@@ -103,6 +103,8 @@ jobs:
     # shape rather than importing it (see mcp-server/mcp_server/corpus_provider.py's
     # own docstring for why), so it only needs ragcore + its own [dev]
     # extra installed, independent of server/'s or sdk/python's.
+    # `generation` is needed as of Phase 10 §8 (mcp_server/rules_provider.py,
+    # the list_rules/match_rules/review_rule/extract_rules tools).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,9 +113,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ragcore, then the MCP server package with dev tooling
+      - name: Install ragcore[generation], then the MCP server package with dev tooling
         run: |
-          pip install -e .
+          pip install -e ".[generation]"
           pip install -e "mcp-server[dev]"
 
       - name: Run the MCP server test suite

@@ -151,8 +151,15 @@ async def test_ask_with_a_generator_returns_an_answer(corpus_with_generator, tmp
     assert body["citations"]
 
 
-async def test_the_four_tools_are_registered(corpus) -> None:
+async def test_the_original_four_corpus_tools_are_registered(corpus) -> None:
     server = build_server(corpus_provider=lambda: corpus)
     tools = await server.list_tools()
     names = {t.name for t in tools}
-    assert names == {"ingest_file", "retrieve", "ask", "list_sources"}
+    # Phase 10 added four more (list_rules/match_rules/review_rule/
+    # extract_rules, see test_rules_tools.py) - this only pins the
+    # original corpus-level four are still exactly these four names.
+    assert {"ingest_file", "retrieve", "ask", "list_sources"} <= names
+    assert names == {
+        "ingest_file", "retrieve", "ask", "list_sources",
+        "list_rules", "match_rules", "review_rule", "extract_rules",
+    }

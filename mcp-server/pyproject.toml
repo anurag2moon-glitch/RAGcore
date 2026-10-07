@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ragcore-mcp-server"
 version = "0.1.0"
-description = "MCP server exposing a single ragcore.Corpus as tools (ingest/retrieve/ask/list_sources) for an MCP client (e.g. Claude Desktop/Code). See docs/adr/0008-api-server-as-sibling-package.md."
+description = "MCP server exposing a single ragcore.Corpus and its rule base as tools (ingest/retrieve/ask/list_sources, list_rules/match_rules/review_rule/extract_rules) for an MCP client (e.g. Claude Desktop/Code). See docs/adr/0008-api-server-as-sibling-package.md."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -13,9 +13,11 @@ dependencies = [
     "mcp>=2.0",
 ]
 # ragcore itself is a sibling-package dependency, installed separately
-# into the same venv (pip install -e .. -e ".[dev]") - same reasoning
-# as server/pyproject.toml: a relative file://../ direct reference
-# isn't a portable way to express "the sibling directory."
+# into the same venv (pip install -e "..[generation]" -e ".[dev]") -
+# same reasoning as server/pyproject.toml: a relative file://../ direct
+# reference isn't a portable way to express "the sibling directory."
+# `generation` is required as of Phase 10 §8 for ragcore.rules
+# (pydantic - mcp_server/rules_provider.py).
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
