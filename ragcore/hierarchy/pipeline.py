@@ -109,6 +109,7 @@ def build_hierarchy(
         child_texts: Sequence[str],
         child_ids: Sequence[str],
         source_chunk_ids: Sequence[str],
+        tenant_id: str | None,
     ) -> HierarchyNode | None:
         nonlocal nodes_built, nodes_skipped
         fingerprint = _fingerprint(summarizer.model, child_ids)
@@ -143,7 +144,7 @@ def build_hierarchy(
             return None
 
         vector = corpus.embedder.embed_groups([[node.summary]], input_type="document")[0][0]
-        node = dataclasses.replace(node, vector=tuple(vector))
+        node = dataclasses.replace(node, vector=tuple(vector), tenant_id=tenant_id)
         store.add_node(node, fingerprint=fingerprint)
         nodes_built += 1
         if on_progress:
@@ -152,6 +153,7 @@ def build_hierarchy(
 
     for source in sources:
         chunks = corpus.store.get_by_source(source.source_id)
+        source_tenant_id = chunks[0].meta.tenant_id if chunks else None
         chapter_node_ids: list[str] = []
         chapter_texts: list[str] = []
 
@@ -177,6 +179,7 @@ def build_hierarchy(
                         [c.text for c in section_chunks],
                         section_chunk_ids,
                         section_chunk_ids,
+                        source_tenant_id,
                     )
                     if node is None:
                         continue  # this section failed — skip it, the chapter proceeds without it
@@ -202,6 +205,7 @@ def build_hierarchy(
                 chapter_child_texts,
                 chapter_child_ids,
                 chapter_source_chunk_ids,
+                source_tenant_id,
             )
             if chapter_node is None:
                 continue
@@ -246,6 +250,7 @@ def build_hierarchy(
             book_child_texts,
             book_child_ids,
             [c.chunk_id for c in chunks],
+            source_tenant_id,
         )
 
     return HierarchyReport(

@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS hierarchy_nodes (
     model TEXT NOT NULL,
     prompt_version TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    vector_json TEXT
+    vector_json TEXT,
+    tenant_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_hierarchy_nodes_source ON hierarchy_nodes(source_id);
 CREATE INDEX IF NOT EXISTS idx_hierarchy_nodes_level ON hierarchy_nodes(level);
@@ -52,6 +53,7 @@ def _row_to_node(row: tuple) -> HierarchyNode:
     (
         node_id, level, source_id, label, summary, child_ids_json,
         source_chunk_ids_json, model, prompt_version, created_at, vector_json,
+        tenant_id,
     ) = row
     return HierarchyNode(
         node_id=node_id,
@@ -65,12 +67,13 @@ def _row_to_node(row: tuple) -> HierarchyNode:
         prompt_version=prompt_version,
         created_at=created_at,
         vector=tuple(json.loads(vector_json)) if vector_json else None,
+        tenant_id=tenant_id,
     )
 
 
 _NODE_COLUMNS = (
     "node_id, level, source_id, label, summary, child_ids_json, "
-    "source_chunk_ids_json, model, prompt_version, created_at, vector_json"
+    "source_chunk_ids_json, model, prompt_version, created_at, vector_json, tenant_id"
 )
 
 
@@ -85,6 +88,9 @@ class SqliteHierarchyStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(hierarchy_nodes)")}
+        if "tenant_id" not in columns:
+            self._conn.execute("ALTER TABLE hierarchy_nodes ADD COLUMN tenant_id TEXT")
 
     @wrap_backend_errors
     def add_node(self, node: HierarchyNode, *, fingerprint: str) -> None:
@@ -93,19 +99,21 @@ class SqliteHierarchyStore:
             try:
                 self._conn.execute(
                     f"INSERT INTO hierarchy_nodes ({_NODE_COLUMNS}) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(node_id) DO UPDATE SET "
                     "level = excluded.level, source_id = excluded.source_id, "
                     "label = excluded.label, summary = excluded.summary, "
                     "child_ids_json = excluded.child_ids_json, "
                     "source_chunk_ids_json = excluded.source_chunk_ids_json, "
                     "model = excluded.model, prompt_version = excluded.prompt_version, "
-                    "created_at = excluded.created_at, vector_json = excluded.vector_json",
+                    "created_at = excluded.created_at, vector_json = excluded.vector_json, "
+                    "tenant_id = excluded.tenant_id",
                     (
                         node.node_id, node.level, node.source_id, node.label, node.summary,
                         json.dumps(list(node.child_ids)), json.dumps(list(node.source_chunk_ids)),
                         node.model, node.prompt_version, node.created_at,
                         json.dumps(list(node.vector)) if node.vector is not None else None,
+                        node.tenant_id,
                     ),
                 )
                 self._conn.execute(

@@ -54,3 +54,12 @@ class HierarchyNode:
     follows, for the same reason (ragcore.retrieval.hierarchy.HierarchyRetriever
     needs a real vector to score a node against a query on the same scale
     every other retrieval layer uses)."""
+
+    tenant_id: str | None = None
+    """Same meaning as ragcore.types.ChunkMeta.tenant_id — filled in by
+    ragcore.hierarchy.pipeline.build_hierarchy from the owning source's
+    own chunks (every chunk of one source shares one tenant_id by
+    construction), the same way `vector` is filled in after
+    HierarchySummarizer.summarize() returns rather than by the summarizer
+    itself, since a HierarchySummarizer has no reason to know about
+    tenancy at all."""

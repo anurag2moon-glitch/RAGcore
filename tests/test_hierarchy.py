@@ -124,3 +124,50 @@ def test_remove_source_deletes_every_node_and_checkpoint(tmp_path: Path) -> None
     assert store.nodes_for_source(source_id) == []
     book_node_id = f"hierarchy:book:{source_id}"
     assert store.checkpoint(book_node_id) is None
+
+
+def test_every_built_node_carries_its_sources_tenant_id(tmp_path: Path) -> None:
+    p = tmp_path / "book.md"
+    p.write_text(
+        "# Chapter 1\n\n"
+        "## Section A\nText about section A.\n\n"
+        "## Section B\nText about section B.\n\n"
+        "# Chapter 2\n\n"
+        "Flat chapter with no sub-sections, just one paragraph.\n"
+    )
+    corpus = Corpus(InMemoryStore(dim=8), FakeEmbedder(dim=8))
+    corpus.ingest(p, tenant_id="tenant-a")
+    store = SqliteHierarchyStore(":memory:")
+
+    build_hierarchy(corpus, store, _FakeSummarizer())
+
+    nodes = store.all_nodes()
+    assert nodes
+    assert all(n.tenant_id == "tenant-a" for n in nodes)
+
+
+def test_opening_a_pre_tenant_id_table_migrates_via_alter_table(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "hierarchy.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE hierarchy_nodes (node_id TEXT PRIMARY KEY, level TEXT NOT NULL, "
+        "source_id TEXT NOT NULL, label TEXT NOT NULL, summary TEXT NOT NULL, "
+        "child_ids_json TEXT NOT NULL, source_chunk_ids_json TEXT NOT NULL, "
+        "model TEXT NOT NULL, prompt_version TEXT NOT NULL, created_at TEXT NOT NULL, "
+        "vector_json TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO hierarchy_nodes (node_id, level, source_id, label, summary, "
+        "child_ids_json, source_chunk_ids_json, model, prompt_version, created_at, vector_json) "
+        "VALUES ('n1', 'book', 's1', 'Book', 'summary', '[]', '[]', 'm', 'v1', 'now', NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+    store = SqliteHierarchyStore(path)  # must migrate via ALTER TABLE, not raise
+
+    node = store.node("n1")
+    assert node is not None
+    assert node.tenant_id is None
