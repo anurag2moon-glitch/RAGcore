@@ -465,7 +465,7 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   cookbook entries once Mimisi/Vastu Shastra integration details
   exist) is tracked as open-ended improvement, not a numbered gap.
 
-### Phase 10 — Rule extraction and rule base (domain-pluggable) — 🟡 in progress (as of 2026-10-07)
+### Phase 10 — Rule extraction and rule base (domain-pluggable) — ✅ all 8 sections done (2026-10-07)
 
 A new, 10th phase beyond the original 9-phase target spec, added mid-session
 per a separate spec: extract hard, machine-evaluable rules from books (first
