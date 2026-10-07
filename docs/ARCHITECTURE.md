@@ -267,7 +267,7 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   (extractors' own call-level detail, router, judge, rewriter, verifier,
   generator) don't have logging yet either.
 
-### Phase 7 — Multi-tenancy and platform — 🟡 foundation + enforcement wrapper done (2026-10-07), everything else still open
+### Phase 7 — Multi-tenancy and platform — 🟡 every library-tractable item done (2026-10-07); auth/RBAC/quotas and encryption/audit-logs need a real server (Phase 8), Tier 2 tenant_id is a deliberately open design question
 - ✅ `tenant_id` foundation — `ChunkMeta.tenant_id: str | None = None`
   (opt-in, additive), wired through `Corpus.ingest()`/`ingest_many()`'s
   new `tenant_id=...` param, and through `LanceDBStore`'s schema +
@@ -360,9 +360,16 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   than editing it, since silently rewriting it would leave the
   Generator-visible text and a `Corpus.get(chunk_id)` citation lookup
   inconsistent).
-- ⬜ Encryption at rest/in transit config, audit logs, copyright/
-  licensing flag per document — none of this exists yet; most need an
-  actual request/server context (Phase 8) this library doesn't have.
+- ✅ Per-document licensing flag — `ChunkMeta.license_id` (named to
+  avoid shadowing the `license` builtin — confirmed via ruff's A002,
+  not guessed), same opt-in/additive shape as `tenant_id`:
+  `Corpus.ingest(..., license_id=...)`, filterable via `LanceDBStore`.
+  Mechanism only, same "not an enforced guarantee" positioning as
+  `tenant_id` — ragcore filters on it if asked, it never refuses to
+  generate from a flagged chunk on its own.
+- ⬜ Encryption at rest/in transit config, audit logs — none of this
+  exists yet; both need an actual request/server context (Phase 8)
+  this library doesn't have.
 
 ### Phase 8 — API, SDKs, deployment
 ⬜ **Entirely absent.** No FastAPI/any HTTP server, no OpenAPI spec, no
@@ -579,8 +586,9 @@ else (28b, 30+) still from scratch.**
     export, retention policy — ⬜, still open.
 33. 🟡 PII detection — ✅ `ragcore.privacy` (commit c85387a).
     Prompt-injection defenses — ✅ `ragcore.injection` (commit f7a7c68).
-    Encryption at rest/in transit, audit logs, per-document licensing
-    flag — ⬜, still open.
+    Per-document licensing flag — ✅ `ChunkMeta.license_id` (commit
+    709b9d4). Encryption at rest/in transit, audit logs — ⬜, still
+    open; both need a real request/server context (Phase 8).
 
 **Phase 8 (API/SDK/deployment):** everything, from scratch, after Phase 7's
 tenancy model is settled (an API surface built before tenant_id exists would
