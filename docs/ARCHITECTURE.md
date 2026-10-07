@@ -345,8 +345,10 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   configured, opt-in and backward compatible — see
   [ADR 0012](adr/0012-api-key-auth-and-multi-tenant-routing.md)). This
   is what unlocked real multi-tenant HTTP routing on `server/` (next
-  bullet). JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
-  metering ready for billing — ⬜, still open.
+  bullet). Rate limiting — ✅ `server/app/rate_limit.py` (token bucket
+  per tenant_id/client IP, `RAGCORE_RATE_LIMIT_PER_MINUTE`-configured,
+  same opt-in shape). JWT/OAuth, RBAC, per-tenant quotas, billing-ready
+  usage metering — ⬜, still open.
 - ✅ Semantic/result cache with tenant-scoped invalidation —
   `ragcore.caching` (`ResultCache` protocol, `InMemoryResultCache`
   default, `CachingRetriever` decorator). `invalidate(tenant_id=...)` is
@@ -646,9 +648,10 @@ else (28b, 30+) still from scratch.**
     that don't carry `tenant_id` at all, so wiring either onto a
     multi-tenant `TenantScopedCorpus` today risks real cross-tenant
     leakage, not just a missed filter.
-30. 🟡 API keys — ✅ `server/app/auth.py` (commit 707cd52). JWT/OAuth,
-    RBAC, per-tenant quotas, rate limiting, billing-ready usage
-    metering — ⬜, still open.
+30. 🟡 API keys — ✅ `server/app/auth.py` (commit 707cd52). Rate
+    limiting — ✅ `server/app/rate_limit.py` (commit f219ba6).
+    JWT/OAuth, RBAC, per-tenant quotas, billing-ready usage metering —
+    ⬜, still open.
 31. ✅ Semantic/result cache with tenant-scoped invalidation —
     `ragcore.caching` (commit 9ac827f).
 32. 🟡 Data lifecycle — ✅ hard delete:
