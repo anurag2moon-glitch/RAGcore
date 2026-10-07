@@ -72,3 +72,27 @@ jobs:
       - name: Run the server test suite
         working-directory: server
         run: python -m pytest -q
+
+  test-sdk:
+    # sdk/python/ is a third sibling package — the Python client SDK
+    # (docs/adr/0008). Its own tests reach server/app via a sys.path
+    # insert (see sdk/python/tests/test_client.py), not a pip-installed
+    # server package, so only ragcore + sdk/python's own [dev] extra
+    # (which already declares fastapi/uvicorn/python-multipart as
+    # test-only deps) need installing here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ragcore, then the SDK package with dev tooling
+        run: |
+          pip install -e .
+          pip install -e "sdk/python[dev]"
+
+      - name: Run the SDK test suite
+        working-directory: sdk/python
+        run: python -m pytest -q
