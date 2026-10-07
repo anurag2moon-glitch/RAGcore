@@ -9,49 +9,20 @@ Lal-Kitab-specific code anywhere in ragcore itself.
 
 from __future__ import annotations
 
+from helpers import build_rule_from_mentions
 from lal_kitab import LalKitabPack
 
 from ragcore.rules.consistency import detect_conflicts
 from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
 from ragcore.rules.serving import match_with_provenance
 from ragcore.rules.sqlite_store import SqliteRuleStore
-from ragcore.rules.types import (
-    ConditionGroup,
-    Effect,
-    FactPredicate,
-    Rule,
-    rule_content_hash,
-)
+from ragcore.rules.types import Effect
 
 
-def _build_rule_from_mentions(pack: LalKitabPack, *, verbatim_span: str, mentions, effect: Effect) -> Rule:
-    """Mirrors ragcore.rules.claude's _build_conditions logic by hand,
-    without going through the LLM-backed extractor - proves the
-    ontology's output is directly usable by the schema with no
-    adapter code."""
-    predicates = []
-    for fact_mention, operator, value_mention in mentions:
-        fact_key = pack.ontology.normalize_fact_key(fact_mention)
-        assert fact_key is not None, f"couldn't normalize {fact_mention!r}"
-        if operator == "exists":
-            predicates.append(FactPredicate(fact=fact_key, operator="exists"))
-        else:
-            value = pack.ontology.normalize_fact_value(fact_key, value_mention)
-            assert value is not None, f"couldn't normalize value {value_mention!r} for {fact_key!r}"
-            predicates.append(FactPredicate(fact=fact_key, operator=operator, value=value))
-
-    conditions = predicates[0] if len(predicates) == 1 else ConditionGroup(op="and", children=predicates)
-    rule_id = rule_content_hash(
-        domain=pack.domain, book_id="lal_kitab_ch1", verbatim_span=verbatim_span,
-        conditions=conditions, effect=effect,
-    )
-    return Rule(
-        rule_id=rule_id, domain=pack.domain, pack_id=pack.pack_id, pack_version=pack.pack_version,
-        book_id="lal_kitab_ch1", page_start=42, chunk_ids=("lal_kitab_ch1:5",),
-        verbatim_span=verbatim_span, language="hi-en", normalized_statement=verbatim_span,
-        conditions=conditions, effect=effect, rule_type="HARD", confidence=0.95,
-        extraction_model="test", extraction_version="v1", created_at="now",
-        review_status="verified",
+def _build_rule_from_mentions(pack: LalKitabPack, *, verbatim_span: str, mentions, effect: Effect):
+    return build_rule_from_mentions(
+        pack, book_id="lal_kitab_ch1", chunk_id="lal_kitab_ch1:5",
+        verbatim_span=verbatim_span, mentions=mentions, effect=effect,
     )
 
 

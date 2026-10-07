@@ -115,7 +115,18 @@ def _candidate_match(gold: GoldRule, extracted: Sequence[Rule]) -> Rule | None:
     gold isn't that first one. Prefers an exact full match outright;
     otherwise prefers the rule with the most overlapping leaf facts
     with gold's own conditions (a similarity heuristic, not a
-    correctness judgment — see _collect_leaf_facts)."""
+    correctness judgment — see _collect_leaf_facts).
+
+    Returns None — "nothing extracted for this gold rule" — when even
+    the best same-chunk candidate shares **zero** facts with gold's
+    own conditions, rather than forcing a pairing onto some unrelated
+    rule that merely happens to share a chunk. A multi-rule chunk with
+    one gold rule genuinely missed (nothing resembling it extracted)
+    must not get scored as "attempted, but wrong" against whichever
+    unrelated sibling rule happened to also come from that chunk —
+    confirmed by a real false failure this produced before the fix,
+    caught by the Lal Kitab gold-set regression test
+    (domains/lal_kitab/tests/test_eval_gold.py), not hand-derived."""
     same_chunk = [r for r in extracted if gold.chunk_id in r.chunk_ids]
     if not same_chunk:
         return None
@@ -125,7 +136,10 @@ def _candidate_match(gold: GoldRule, extracted: Sequence[Rule]) -> Rule | None:
         return exact[0]
 
     gold_facts = _collect_leaf_facts(gold.conditions)
-    return max(same_chunk, key=lambda r: len(gold_facts & _collect_leaf_facts(r.conditions)))
+    best = max(same_chunk, key=lambda r: len(gold_facts & _collect_leaf_facts(r.conditions)))
+    if not (gold_facts & _collect_leaf_facts(best.conditions)):
+        return None
+    return best
 
 
 def evaluate_extraction(

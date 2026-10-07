@@ -120,6 +120,31 @@ jobs:
         working-directory: mcp-server
         run: python -m pytest -q
 
+  test-lal-kitab:
+    # domains/lal_kitab/ is a sixth sibling package — the Lal Kitab
+    # astrology domain pack (Phase 10 §7, docs/adr/0013). Needs
+    # ragcore's `generation` extra (pydantic) installed alongside it,
+    # unlike server/sdk/mcp-server which only need plain ragcore.
+    # Its own test suite includes the Phase 10 §6 CI regression gate
+    # (tests/test_eval_gold.py) over the hand-labeled 3-chapter gold
+    # set — this job failing is that gate, not a separate mechanism.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ragcore[generation], then the Lal Kitab pack with dev tooling
+        run: |
+          pip install -e ".[generation]"
+          pip install -e "domains/lal_kitab[dev]"
+
+      - name: Run the Lal Kitab test suite
+        working-directory: domains/lal_kitab
+        run: python -m pytest -q
+
   test-typescript-sdk:
     # sdk/typescript/ is a fifth sibling package — the TypeScript
     # client SDK (docs/adr/0008). Its tests spawn a real server/
