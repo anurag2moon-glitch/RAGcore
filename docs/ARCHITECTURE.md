@@ -561,12 +561,24 @@ deterministic engine. See `docs/adr/0013-rule-extraction-domain-pluggable-archit
   bug this caught before being trusted: a missed gold rule was scored
   against an unrelated sibling rule sharing its chunk, not treated as
   "nothing extracted" — fixed in `_candidate_match`.
-- ⬜ **§8 Integration and docs** — API endpoints (`server/`), SDK methods
-  (`sdk/python/`, `sdk/typescript/`), MCP tools (`extract_rules`/
-  `list_rules`/`match_rules`/`review_rule`, `mcp-server/`), tenant
-  isolation for private packs (the storage-level guard in `packs.py`
-  exists; no API-level enforcement yet), extraction-job quota/token-cost
-  metering, schema reference, ontology reference, cookbook. Not started.
+- ✅ **§8 Integration and docs** — REST API (`server/app/rules_routes.py`:
+  `list_rules`/`match_rules`/`approve`/`reject`/`edit`/`extract`), the
+  same four operations as MCP tools (`mcp-server/`), and as methods on
+  both SDKs (`sdk/python/`, `sdk/typescript/`). Tenant isolation for
+  private packs: storage-level guard in `packs.py` (refuses cross-
+  tenant pack import) **and** route-level filtering (every rule route
+  shows global rules + only the caller's own tenant's private ones —
+  verified against two real tenant API keys, not assumed). Extraction-
+  job token-cost quota — `RAGCORE_EXTRACTION_TOKEN_QUOTAS`
+  (`server/app/extraction_quota.py`), metered from the real
+  `input_tokens + output_tokens` on every Claude response via
+  `ClaudeRuleCandidateDetector`/`Extractor`/`Verifier`'s own
+  `UsageTracker`, aggregated into `RuleExtractionReport.total_tokens_used`
+  — checked before a job runs, recorded after. Schema reference
+  (`docs/DATA_MODEL.md`), ontology reference (`docs/RULES_ONTOLOGY.md`),
+  cookbook (`docs/COOKBOOK.md` + `domains/lal_kitab/examples/demo.py`).
+  One real, pre-existing gap surfaced while wiring `/rules/extract`
+  through `TenantScopedCorpus` — see "What's fragile" below.
 
 ## 3. What's fragile
 
@@ -629,6 +641,33 @@ deterministic engine. See `docs/adr/0013-rule-extraction-domain-pluggable-archit
     `docs/adr/0002-ingest-checkpointing-opt-in.md`. Worth a docstring
     correction next time that file is touched for an unrelated reason;
     not fixed here to stay within this pass's actual scope.
+11. **New from Phase 10**: every `build_*()` pipeline in `ragcore`
+    (`build_graph`/`build_concepts`/`build_claims`/
+    `build_contextual_embeddings`/`build_rules`) reads chunks via
+    `corpus.store.get_by_source()` directly, bypassing
+    `TenantScopedCorpus` entirely — none of them go through its
+    wrapped methods, so in multi-tenant mode every one of them reads
+    across *every* tenant's ingested chunks, not just one tenant's.
+    Surfaced while wiring `/rules/extract` through a real
+    `TenantScopedCorpus` in `server/app/rules_routes.py` (a genuine
+    `AttributeError: 'TenantScopedCorpus' object has no attribute
+    'store'` the first time any pipeline builder was actually called
+    with one) — fixed *for that one route* by unwrapping back to the
+    raw `Corpus` before calling `build_rules()`, with the limitation
+    stated plainly in `server/README.md`, not retrofitted into
+    `ragcore.rules.pipeline` itself (which would make it behave
+    differently from every sibling pipeline builder, not actually
+    close the systemic gap). The same `AttributeError` would reproduce
+    identically for `build_graph`/`build_concepts`/`build_claims`/
+    `build_contextual_embeddings` the moment anything calls one of
+    them with a `TenantScopedCorpus` — this item exists so that's not
+    rediscovered independently later. A real fix needs either a
+    `.store` passthrough on `TenantScopedCorpus` (and a decision about
+    whether that passthrough itself needs tenant-filtering, which
+    `ragcore.tenancy.TenantScopedCorpus`'s own docstring already flags
+    as an open question for other store/retriever paths) or a
+    `get_by_source`-shaped method each pipeline builder calls through
+    `Corpus`'s own interface instead of reaching into `.store`.
 
 ## 4. Mimisi / Vastu Shastra boundary check
 

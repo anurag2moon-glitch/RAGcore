@@ -219,6 +219,7 @@ export class RagcoreClient {
       rulesStored: body.rules_stored,
       rulesRejectedUnsupported: body.rules_rejected_unsupported,
       errors: body.errors,
+      totalTokensUsed: body.total_tokens_used,
     };
   }
 }

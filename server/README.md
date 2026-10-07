@@ -104,6 +104,36 @@ until configured). In multi-tenant mode, every route filters to global
 rules plus only the calling tenant's own private ones — enforced here,
 in the route layer, not inside `RuleStore` itself.
 
+**`/rules/extract`'s own token-cost quota** (separate from the generic
+per-request `RAGCORE_TENANT_QUOTAS` above — extraction cost varies
+enormously job to job, which request-count quotas can't capture):
+
+```
+export RAGCORE_EXTRACTION_TOKEN_QUOTAS="tenant-a:100000,tenant-b:500000"
+```
+
+A lifetime total token cap per tenant, metered from the real
+`input_tokens + output_tokens` on every Claude API response
+(`ClaudeRuleCandidateDetector`/`Extractor`/`Verifier`'s own
+`.usage: ragcore.embedding.cost.UsageTracker`), not a client-side
+estimate. Checked *before* a job runs (rejects `402` if already over
+budget from past jobs) and recorded *after* it returns (the job's own
+cost isn't known until then) — a single job can therefore push a
+tenant over quota by however much that job costs; only the *next* one
+is rejected. A tenant with no entry is unlimited; unset means no
+enforcement.
+
+**Known limitation**: `/rules/extract` reads chunks via
+`corpus.store.get_by_source()` directly, same as every `build_*()`
+pipeline in `ragcore` (graph/concepts/claims/contextual embeddings) —
+none of them go through `TenantScopedCorpus`'s own wrapped methods, so
+in multi-tenant mode extraction currently reads across **every**
+tenant's ingested chunks, not just the calling tenant's. This is a
+pre-existing, systemic gap in `ragcore`'s pipeline builders, not
+something specific to rule extraction — see
+`ragcore.tenancy.TenantScopedCorpus`'s own docstring for the other
+store/retriever paths it similarly doesn't cover yet.
+
 ## Test
 
 ```

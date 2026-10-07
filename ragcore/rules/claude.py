@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 from pydantic import BaseModel
 
+from ragcore.embedding.cost import UsageTracker
 from ragcore.errors import GenerationError
 from ragcore.graph.claude_extractor import _format_chunks
 from ragcore.model_routing import DEFAULT_ROUTING
@@ -133,7 +134,17 @@ def _call_parse_with_retry(
     max_tokens: int,
     max_retries: int,
     label: str,
+    usage: UsageTracker,
 ) -> Any:
+    """`usage` is reused from `ragcore.embedding.cost` rather than
+    duplicated — it's a generic token/request/cost counter with
+    nothing embedding-specific about it (same reuse discipline
+    `ragcore.claims.claude` already follows for `_format_chunks`).
+    Phase 10 §8's "quotas apply to extraction jobs (token cost
+    metering)" needs real token counts to meter against; this is
+    where they're captured, straight from the API response's own
+    `usage` field (exact, billed tokens) rather than a client-side
+    estimate."""
     last_err: Exception | None = None
     for attempt in range(max_retries):
         try:
@@ -144,6 +155,7 @@ def _call_parse_with_retry(
                 messages=[{"role": "user", "content": user_content}],
                 output_format=output_format,
             )
+            usage.record_success(response.usage.input_tokens + response.usage.output_tokens)
             return response.parsed_output
         except anthropic.RateLimitError as e:
             last_err = e
@@ -153,11 +165,13 @@ def _call_parse_with_retry(
             if e.status_code >= 500:
                 last_err = e
             else:
+                usage.record_failure()
                 raise GenerationError(f"{model} {label} request rejected: {e}") from e
 
         if attempt < max_retries - 1:
             time.sleep(min(2**attempt, 30))
 
+    usage.record_failure()
     raise GenerationError(f"{model} {label} failed after {max_retries} attempts: {last_err}") from last_err
 
 
@@ -189,6 +203,7 @@ class ClaudeRuleCandidateDetector:
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
+        self.usage = UsageTracker()
 
     def detect(self, chunks: Sequence[Chunk], *, domain_pack: DomainPack) -> list[CandidateSpan]:
         if not chunks:
@@ -208,7 +223,7 @@ class ClaudeRuleCandidateDetector:
         parsed = _call_parse_with_retry(
             self._client, model=self.model, system=system, user_content=formatted,
             output_format=_CandidateDetectionResult, max_tokens=self._max_tokens,
-            max_retries=self._max_retries, label="rule candidate detection",
+            max_retries=self._max_retries, label="rule candidate detection", usage=self.usage,
         )
 
         candidates: list[CandidateSpan] = []
@@ -280,6 +295,7 @@ class ClaudeRuleExtractor:
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
+        self.usage = UsageTracker()
 
     def extract(
         self, candidates: Sequence[CandidateSpan], *, domain_pack: DomainPack
@@ -305,7 +321,7 @@ class ClaudeRuleExtractor:
         parsed = _call_parse_with_retry(
             self._client, model=self.model, system=system, user_content=numbered,
             output_format=_RuleExtractionResult, max_tokens=self._max_tokens,
-            max_retries=self._max_retries, label="rule extraction",
+            max_retries=self._max_retries, label="rule extraction", usage=self.usage,
         )
 
         index_to_candidate = {i: c for i, c in enumerate(candidates, start=1)}
@@ -385,6 +401,7 @@ class ClaudeRuleVerifier:
         self._client = client or (
             anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
         )
+        self.usage = UsageTracker()
 
     def verify(self, rules: Sequence[Rule], *, domain_pack: DomainPack) -> list[VerificationResult]:
         if not rules:
@@ -409,7 +426,7 @@ class ClaudeRuleVerifier:
             self._client, model=self.model, system=system,
             user_content=numbered, output_format=_RuleVerificationResult,
             max_tokens=self._max_tokens, max_retries=self._max_retries,
-            label="rule verification",
+            label="rule verification", usage=self.usage,
         )
 
         index_to_rule = {i: r for i, r in enumerate(rules, start=1)}

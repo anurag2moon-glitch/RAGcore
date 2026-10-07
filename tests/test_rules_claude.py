@@ -15,6 +15,9 @@ import pytest
 
 pytest.importorskip("anthropic")
 
+import anthropic
+import httpx
+
 from ragcore.errors import GenerationError
 from ragcore.rules.base import CandidateSpan
 from ragcore.rules.claude import (
@@ -34,9 +37,15 @@ from ragcore.rules.types import ConditionGroup, Effect, FactPredicate, Rule
 from ragcore.types import Chunk, ChunkMeta
 
 
+class _StubUsage:
+    input_tokens = 10
+    output_tokens = 5
+
+
 class _StubResponse:
     def __init__(self, parsed_output: Any) -> None:
         self.parsed_output = parsed_output
+        self.usage = _StubUsage()
 
 
 class _StubMessages:
@@ -123,6 +132,23 @@ def test_detector_drops_a_hallucinated_chunk_index() -> None:
 def test_detector_returns_nothing_for_empty_chunks() -> None:
     detector = ClaudeRuleCandidateDetector(client=_StubClient(_CandidateDetectionResult(candidates=[])))
     assert detector.detect([], domain_pack=_FakeDomainPack()) == []
+
+
+def test_detector_records_token_usage_from_the_real_response() -> None:
+    result = _CandidateDetectionResult(candidates=[])
+    detector = ClaudeRuleCandidateDetector(client=_StubClient(result))
+    assert detector.usage.total_requests == 0
+    assert detector.usage.total_tokens == 0
+
+    detector.detect([_chunk("src:0", "src", "text")], domain_pack=_FakeDomainPack())
+
+    assert detector.usage.total_requests == 1
+    assert detector.usage.total_tokens == 15  # _StubUsage: 10 input + 5 output
+
+    detector.detect([_chunk("src:0", "src", "text")], domain_pack=_FakeDomainPack())
+
+    assert detector.usage.total_requests == 2
+    assert detector.usage.total_tokens == 30
 
 
 # -- ClaudeRuleExtractor ---------------------------------------------------
@@ -277,6 +303,16 @@ def test_extractor_rule_id_is_deterministic_across_separate_calls() -> None:
     assert rules1[0].rule_id == rules2[0].rule_id
 
 
+def test_extractor_records_token_usage() -> None:
+    result = _RuleExtractionResult(rules=[])
+    extractor = ClaudeRuleExtractor(client=_StubClient(result))
+
+    extractor.extract([_candidate()], domain_pack=_FakeDomainPack())
+
+    assert extractor.usage.total_requests == 1
+    assert extractor.usage.total_tokens == 15
+
+
 # -- ClaudeRuleVerifier -----------------------------------------------------
 
 
@@ -332,3 +368,36 @@ def test_verifier_rejects_a_domain_mismatch() -> None:
 def test_verifier_returns_nothing_for_empty_rules() -> None:
     verifier = ClaudeRuleVerifier(client=_StubClient(_RuleVerificationResult(verifications=[])))
     assert verifier.verify([], domain_pack=_FakeDomainPack()) == []
+
+
+def test_verifier_records_token_usage() -> None:
+    rule = _rule()
+    result = _RuleVerificationResult(
+        verifications=[_RuleVerificationOut(rule_index=1, supported=True, reason="matches")]
+    )
+    verifier = ClaudeRuleVerifier(client=_StubClient(result))
+
+    verifier.verify([rule], domain_pack=_FakeDomainPack())
+
+    assert verifier.usage.total_requests == 1
+    assert verifier.usage.total_tokens == 15
+
+
+def test_verifier_records_a_failure_on_a_rejected_request() -> None:
+    client = _StubClient(_RuleVerificationResult(verifications=[]))
+
+    class _RejectingMessages:
+        def parse(self, **kwargs):
+            raise anthropic.APIStatusError(
+                "bad request", response=httpx.Response(400, request=httpx.Request("POST", "https://x")),
+                body=None,
+            )
+
+    client.messages = _RejectingMessages()
+    verifier = ClaudeRuleVerifier(client=client)
+
+    with pytest.raises(GenerationError):
+        verifier.verify([_rule()], domain_pack=_FakeDomainPack())
+
+    assert verifier.usage.failed_requests == 1
+    assert verifier.usage.total_requests == 0

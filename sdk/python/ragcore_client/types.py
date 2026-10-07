@@ -90,3 +90,4 @@ class ExtractRulesResult:
     rules_stored: int
     rules_rejected_unsupported: int
     errors: list[tuple[str, str, str]]
+    total_tokens_used: int

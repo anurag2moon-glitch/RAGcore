@@ -214,4 +214,5 @@ class RagcoreClient:
             rules_stored=body["rules_stored"],
             rules_rejected_unsupported=body["rules_rejected_unsupported"],
             errors=[tuple(e) for e in body["errors"]],
+            total_tokens_used=body["total_tokens_used"],
         )

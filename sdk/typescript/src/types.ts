@@ -96,4 +96,5 @@ export interface ExtractRulesResult {
   rulesStored: number;
   rulesRejectedUnsupported: number;
   errors: [string, string, string][];
+  totalTokensUsed: number;
 }

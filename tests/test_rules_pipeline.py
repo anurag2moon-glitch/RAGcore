@@ -124,6 +124,40 @@ def test_build_rules_stores_only_verified_supported_rules(md_book: Path) -> None
     assert len(store.rules_for_domain("test_domain")) == report.rules_stored
 
 
+def test_total_tokens_used_is_zero_when_no_component_tracks_usage(md_book: Path) -> None:
+    """_FakeDetector/_FakeExtractor/_FakeVerifier have no .usage
+    attribute at all - the report must treat that as "0 tokens," not
+    raise, since UsageTracker is an optional capability a concrete
+    implementation attaches, never a required Protocol method."""
+    corpus = _corpus(md_book)
+    store = SqliteRuleStore(":memory:")
+
+    report = build_rules(corpus, store, _FakeDetector(), _FakeExtractor(), _FakeVerifier(), _FakeDomainPack())
+
+    assert report.total_tokens_used == 0
+
+
+def test_total_tokens_used_aggregates_across_components_that_do_track_it(md_book: Path) -> None:
+    from ragcore.embedding.cost import UsageTracker
+
+    class _UsageTrackingExtractor(_FakeExtractor):
+        def __init__(self) -> None:
+            super().__init__()
+            self.usage = UsageTracker()
+
+        def extract(self, candidates, *, domain_pack):
+            self.usage.record_success(100)
+            return super().extract(candidates, domain_pack=domain_pack)
+
+    corpus = _corpus(md_book)
+    store = SqliteRuleStore(":memory:")
+    extractor = _UsageTrackingExtractor()
+
+    report = build_rules(corpus, store, _FakeDetector(), extractor, _FakeVerifier(), _FakeDomainPack())
+
+    assert report.total_tokens_used == 100 * report.chapters_processed
+
+
 def test_an_unsupported_rule_is_never_stored(md_book: Path) -> None:
     corpus = _corpus(md_book)
     store = SqliteRuleStore(":memory:")

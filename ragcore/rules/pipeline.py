@@ -66,6 +66,14 @@ class RuleExtractionReport:
     """Rules that passed verification and were written to the store."""
     rules_rejected_unsupported: int
     errors: tuple[tuple[str, str, str], ...]
+    total_tokens_used: int
+    """Sum of `detector.usage`/`extractor.usage`/`verifier.usage`'s
+    `total_tokens` (Phase 10 §8's "quotas apply to extraction jobs
+    (token cost metering)") — `0` if none of the three components
+    expose a `.usage` attribute (`ragcore.embedding.cost.UsageTracker`
+    is an optional capability a concrete implementation attaches, same
+    as every `Embedder`'s own `.usage`, never a required Protocol
+    method), not an error."""
 
 
 def _fingerprint(
@@ -170,6 +178,12 @@ def build_rules(
             if on_progress:
                 on_progress(RuleExtractionProgress(source.source_id, context_group_id, "done"))
 
+    total_tokens_used = sum(
+        getattr(component, "usage", None).total_tokens
+        for component in (detector, extractor, verifier)
+        if getattr(component, "usage", None) is not None
+    )
+
     return RuleExtractionReport(
         chapters_processed=chapters_processed,
         chapters_skipped=chapters_skipped,
@@ -180,4 +194,5 @@ def build_rules(
         rules_stored=rules_stored,
         rules_rejected_unsupported=rules_rejected_unsupported,
         errors=tuple(errors),
+        total_tokens_used=total_tokens_used,
     )

@@ -226,6 +226,7 @@ def build_server(
             "rules_stored": report.rules_stored,
             "rules_rejected_unsupported": report.rules_rejected_unsupported,
             "errors": list(report.errors),
+            "total_tokens_used": report.total_tokens_used,
         }
 
     return server

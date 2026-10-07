@@ -23,6 +23,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import get_tenant_id
 from app.corpus_provider import get_scoped_corpus
+from app.extraction_quota import (
+    InMemoryExtractionTokenMeter,
+    enforce_extraction_token_quota,
+    get_extraction_token_meter,
+    record_extraction_tokens,
+)
 from app.quota import enforce_quota
 from app.rate_limit import enforce_rate_limit
 from app.rules_models import (
@@ -144,7 +150,10 @@ def edit_rule(
     return RuleResponse.from_rule(rule)
 
 
-@router.post("/extract", response_model=ExtractRulesResponse)
+@router.post(
+    "/extract", response_model=ExtractRulesResponse,
+    dependencies=[Depends(enforce_extraction_token_quota)],
+)
 def extract_rules(
     domain: str,
     source_id: str | None = None,
@@ -152,10 +161,26 @@ def extract_rules(
     store: SqliteRuleStore = Depends(get_rule_store),  # noqa: B008
     domain_pack: DomainPack = Depends(get_domain_pack),  # noqa: B008
     pipeline: tuple[RuleCandidateDetector, RuleExtractor, RuleVerifier] = Depends(get_rule_extraction_pipeline),
+    token_meter: InMemoryExtractionTokenMeter = Depends(get_extraction_token_meter),  # noqa: B008
+    tenant_id: str | None = Depends(get_tenant_id),
 ) -> ExtractRulesResponse:
     detector, extractor, verifier = pipeline
     source_ids = [source_id] if source_id is not None else None
-    report = build_rules(corpus, store, detector, extractor, verifier, domain_pack, source_ids=source_ids)
+    # build_rules() (like every build_*() pipeline in ragcore - graph,
+    # concepts, claims, contextual embeddings) reaches into
+    # corpus.store.get_by_source() directly, which TenantScopedCorpus
+    # does not expose - a pre-existing, systemic gap (see that class's
+    # own docstring's "Known scope limit" on GraphRetriever/ConceptRetriever/
+    # etc. not being tenant-filtered either), not something specific to
+    # rule extraction. Unwrapping back to the raw Corpus here is the
+    # minimal, honest fix for THIS route - it does not retrofit tenant
+    # awareness into build_rules() itself. In multi-tenant mode this
+    # means extraction reads chunks across every tenant's data, not
+    # just the caller's own - stated plainly in server/README.md, not
+    # silently assumed safe.
+    raw_corpus = getattr(corpus, "corpus", corpus)
+    report = build_rules(raw_corpus, store, detector, extractor, verifier, domain_pack, source_ids=source_ids)
+    record_extraction_tokens(report.total_tokens_used, meter=token_meter, tenant_id=tenant_id)
     return ExtractRulesResponse(
         chapters_processed=report.chapters_processed,
         chapters_skipped=report.chapters_skipped,
@@ -164,4 +189,5 @@ def extract_rules(
         rules_stored=report.rules_stored,
         rules_rejected_unsupported=report.rules_rejected_unsupported,
         errors=list(report.errors),
+        total_tokens_used=report.total_tokens_used,
     )
