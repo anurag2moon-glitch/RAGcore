@@ -33,12 +33,19 @@ from ragcore.rules.consistency import (
 from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
 from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
 from ragcore.rules.ocr_quality import is_low_quality_ocr
+from ragcore.rules.packs import (
+    PackImportError,
+    RulePackBundle,
+    export_pack,
+    import_pack,
+)
 from ragcore.rules.pipeline import (
     RuleExtractionProgress,
     RuleExtractionReport,
     build_rules,
 )
 from ragcore.rules.review import ReviewAuditEntry, ReviewQueue
+from ragcore.rules.serving import MatchedRule, RuleMatchResult, match_with_provenance
 from ragcore.rules.sqlite_store import SqliteRuleStore
 from ragcore.rules.types import (
     ConditionGroup,
@@ -61,7 +68,9 @@ __all__ = [
     "Effect",
     "FactPredicate",
     "FactTypeSpec",
+    "MatchedRule",
     "OntologyNormalizer",
+    "PackImportError",
     "Remedy",
     "ReviewAuditEntry",
     "ReviewQueue",
@@ -72,6 +81,8 @@ __all__ = [
     "RuleExtractionProgress",
     "RuleExtractionReport",
     "RuleExtractor",
+    "RuleMatchResult",
+    "RulePackBundle",
     "RuleStore",
     "RuleType",
     "RuleVerifier",
@@ -80,11 +91,14 @@ __all__ = [
     "build_rules",
     "detect_conflicts",
     "evaluate_condition",
+    "export_pack",
     "find_contradictions",
     "find_duplicates",
     "find_exceptions",
+    "import_pack",
     "is_low_quality_ocr",
     "match_rules",
+    "match_with_provenance",
     "resolve_precedence",
     "rule_content_hash",
     "validate_facts",
