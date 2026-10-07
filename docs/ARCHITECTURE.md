@@ -26,8 +26,16 @@ Phase 7 is done for everything tractable as library code (tenant_id
 foundation + enforcement, hard-delete, semantic caching, PII/
 prompt-injection defenses, licensing flags — what's left needs either a
 real server/auth context or is a deliberately deferred design question),
-and Phase 8 has its first piece (a reference FastAPI server, `server/`)
-started. See §2 for the precise breakdown.
+Phase 8 has a reference FastAPI server (`server/`) with its free OpenAPI
+spec, a Python SDK, a TypeScript SDK, and an MCP server all done and
+tested (gRPC, Docker/K8s/Redis/feature-flags/load-tests remain open —
+the last four need infrastructure this sandbox can't validate, not
+guessed-at, so they weren't attempted), and **Phase 9's entire original
+gap list is done** — ADR backfill, a backup/restore runbook, a Mermaid
+system diagram, a data-model reference, a configuration reference, and
+a cookbook, every one of them checked directly against the actual code
+and (where runnable) actually re-run before being written down. See §2
+for the precise breakdown.
 
 `CLAUDE.md` (31KB) already functions as a living, detailed design-decision
 log — far more detailed than typical repo docs — covering nearly every
@@ -418,7 +426,7 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   had or a store is silently skipped; retention only prunes LanceDB
   tags).
 
-### Phase 9 — Docs — 🟡 ADR backfill + runbook started (2026-10-07)
+### Phase 9 — Docs — ✅ original gap list complete (2026-10-07)
 - ✅ ADR backfill (3 of likely several more worth adding later) —
   `docs/adr/0009-library-not-application.md`,
   `0010-content-addressed-identity.md`, `0011-graph-merge-not-replace.md`,
@@ -426,12 +434,21 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   claiming retroactive authorship.
 - ✅ Runbook — `docs/RUNBOOK.md` (backup/restore; see Phase 8 item 38
   above for what it covers).
-- 🟡 `CLAUDE.md` + `README.md` are unusually thorough as *decision logs*,
-  and the ADR directory now exists with 11 entries, but there is still
-  no Mermaid system diagram, no formal data-model reference (beyond
-  `types.py` docstrings), no configuration reference, no cookbook of
-  worked per-downstream-project examples (though `scripts/*_demo.py`
-  are close to cookbook material already).
+- ✅ Mermaid system diagram — `docs/DIAGRAM.md`, two flowcharts,
+  rendered and visually verified via `@mermaid-js/mermaid-cli`.
+- ✅ Data-model reference — `docs/DATA_MODEL.md`, every dataclass a
+  consumer is likely to construct/read/persist.
+- ✅ Configuration reference — `docs/CONFIGURATION.md`, confirmed
+  directly that `ragcore` itself reads zero environment variables.
+- ✅ Cookbook — `docs/COOKBOOK.md`, promoted from `scripts/*_demo.py`;
+  every script re-run against this exact commit before being written
+  up, not described from memory.
+- `CLAUDE.md` + `README.md` remain the unusually thorough *decision
+  logs* they always were; the ADR directory now has 11 entries on top
+  of them. Nothing in this phase's original gap list is open — further
+  documentation work (more ADR backfill, per-downstream-project
+  cookbook entries once Mimisi/Vastu Shastra integration details
+  exist) is tracked as open-ended improvement, not a numbered gap.
 
 ## 3. What's fragile
 
@@ -665,6 +682,14 @@ still from scratch.**
     `@mermaid-js/mermaid-cli`, not just syntax-checked.
 43. ✅ Formal data-model reference — `docs/DATA_MODEL.md`, commit
     d84cdc1.
-44. ⬜ Configuration reference.
-45. ⬜ Cookbook promoted from the existing `scripts/*_demo.py` files,
-    which are already most of the way there.
+44. ✅ Configuration reference — `docs/CONFIGURATION.md`, commit e0dea16.
+45. ✅ Cookbook — `docs/COOKBOOK.md`, commit 1638ff6, promoted from
+    `scripts/*_demo.py` (every script re-run before being written up).
+
+**All 45 numbered gap items from this audit's original Phase 0-9
+breakdown are now done or explicitly, honestly marked as deferred to a
+named follow-on condition** (Tier 2 tenant_id's open design question,
+item 28b; auth-gated items 30/39; infrastructure this sandbox can't
+validate, items 36/37). See §1 and each phase's own section above for
+the precise status of what's done vs. deferred vs. genuinely still
+open.
