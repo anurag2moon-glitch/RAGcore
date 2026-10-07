@@ -9,6 +9,7 @@ pipeline) — the same extra every other structured-LLM-output component
 in this codebase already needs.
 """
 
+from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
 from ragcore.rules.types import (
     ConditionGroup,
     Effect,
@@ -22,8 +23,11 @@ from ragcore.rules.types import (
 
 __all__ = [
     "ConditionGroup",
+    "DomainPack",
     "Effect",
     "FactPredicate",
+    "FactTypeSpec",
+    "OntologyNormalizer",
     "Remedy",
     "ReviewStatus",
     "Rule",
