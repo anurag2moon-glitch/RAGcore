@@ -96,3 +96,26 @@ jobs:
       - name: Run the SDK test suite
         working-directory: sdk/python
         run: python -m pytest -q
+
+  test-mcp-server:
+    # mcp-server/ is a fourth sibling package — the MCP server
+    # (docs/adr/0008). Deliberately duplicates server/'s corpus_provider
+    # shape rather than importing it (see mcp-server/mcp_server/corpus_provider.py's
+    # own docstring for why), so it only needs ragcore + its own [dev]
+    # extra installed, independent of server/'s or sdk/python's.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ragcore, then the MCP server package with dev tooling
+        run: |
+          pip install -e .
+          pip install -e "mcp-server[dev]"
+
+      - name: Run the MCP server test suite
+        working-directory: mcp-server
+        run: python -m pytest -q
