@@ -44,3 +44,49 @@ class RetrievedChunk:
 class AskResult:
     text: str
     citations: list[RetrievedChunk]
+
+
+@dataclass(frozen=True)
+class RuleInfo:
+    """Mirrors server/app/rules_models.py's RuleResponse — a
+    projection of ragcore.rules.types.Rule, not a 1:1 mirror, same
+    philosophy as every other type in this file."""
+
+    rule_id: str
+    domain: str
+    book_id: str
+    chapter: str | None
+    page_start: int
+    verbatim_span: str
+    normalized_statement: str
+    conditions: dict[str, object]
+    effect: dict[str, object]
+    remedy: dict[str, object] | None
+    rule_type: str
+    confidence: float
+    review_status: str
+    version: int
+
+
+@dataclass(frozen=True)
+class MatchedRuleInfo:
+    rule: RuleInfo
+    is_overridden: bool
+    overrides: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MatchRulesResult:
+    matched: list[MatchedRuleInfo]
+    effective: list[RuleInfo]
+
+
+@dataclass(frozen=True)
+class ExtractRulesResult:
+    chapters_processed: int
+    chapters_skipped: int
+    candidates_detected: int
+    rules_extracted: int
+    rules_stored: int
+    rules_rejected_unsupported: int
+    errors: list[tuple[str, str, str]]

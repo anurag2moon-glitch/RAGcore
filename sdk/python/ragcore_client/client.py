@@ -18,7 +18,16 @@ from typing import Any, Self
 import httpx
 
 from ragcore_client.errors import RagcoreClientError
-from ragcore_client.types import AskResult, IngestResult, RetrievedChunk, SourceInfo
+from ragcore_client.types import (
+    AskResult,
+    ExtractRulesResult,
+    IngestResult,
+    MatchedRuleInfo,
+    MatchRulesResult,
+    RetrievedChunk,
+    RuleInfo,
+    SourceInfo,
+)
 
 
 def _chunk_from_dict(d: dict[str, Any]) -> RetrievedChunk:
@@ -31,6 +40,16 @@ def _chunk_from_dict(d: dict[str, Any]) -> RetrievedChunk:
         chapter_title=d.get("chapter_title"),
         tenant_id=d.get("tenant_id"),
         license_id=d.get("license_id"),
+    )
+
+
+def _rule_from_dict(d: dict[str, Any]) -> RuleInfo:
+    return RuleInfo(
+        rule_id=d["rule_id"], domain=d["domain"], book_id=d["book_id"], chapter=d.get("chapter"),
+        page_start=d["page_start"], verbatim_span=d["verbatim_span"],
+        normalized_statement=d["normalized_statement"], conditions=d["conditions"],
+        effect=d["effect"], remedy=d.get("remedy"), rule_type=d["rule_type"],
+        confidence=d["confidence"], review_status=d["review_status"], version=d["version"],
     )
 
 
@@ -115,3 +134,84 @@ class RagcoreClient:
     def delete_source(self, source_id: str) -> int:
         resp = self._request("DELETE", f"/sources/{source_id}")
         return resp.json()["chunks_deleted"]
+
+    # -- Phase 10: rules (server/app/rules_routes.py) ------------------
+
+    def list_rules(self, domain: str, *, book_id: str | None = None) -> list[RuleInfo]:
+        params: dict[str, Any] = {"domain": domain}
+        if book_id is not None:
+            params["book_id"] = book_id
+        resp = self._request("GET", "/rules", params=params)
+        return [_rule_from_dict(r) for r in resp.json()]
+
+    def match_rules(
+        self,
+        domain: str,
+        facts: dict[str, Any],
+        *,
+        book_id: str | None = None,
+        include_unverified: bool = False,
+    ) -> MatchRulesResult:
+        resp = self._request(
+            "POST", "/rules/match",
+            json={
+                "domain": domain, "facts": facts, "book_id": book_id,
+                "include_unverified": include_unverified,
+            },
+        )
+        body = resp.json()
+        return MatchRulesResult(
+            matched=[
+                MatchedRuleInfo(
+                    rule=_rule_from_dict(m["rule"]), is_overridden=m["is_overridden"],
+                    overrides=tuple(m["overrides"]),
+                )
+                for m in body["matched"]
+            ],
+            effective=[_rule_from_dict(r) for r in body["effective"]],
+        )
+
+    def approve_rule(self, rule_id: str, *, reviewer: str, reason: str = "") -> RuleInfo:
+        resp = self._request(
+            "POST", f"/rules/{rule_id}/approve", json={"reviewer": reviewer, "reason": reason}
+        )
+        return _rule_from_dict(resp.json())
+
+    def reject_rule(self, rule_id: str, *, reviewer: str, reason: str) -> RuleInfo:
+        resp = self._request(
+            "POST", f"/rules/{rule_id}/reject", json={"reviewer": reviewer, "reason": reason}
+        )
+        return _rule_from_dict(resp.json())
+
+    def edit_rule(
+        self,
+        rule_id: str,
+        *,
+        reviewer: str,
+        reason: str,
+        effect: dict[str, Any] | None = None,
+        confidence: float | None = None,
+        remedy: dict[str, Any] | None = None,
+    ) -> RuleInfo:
+        resp = self._request(
+            "POST", f"/rules/{rule_id}/edit",
+            json={
+                "reviewer": reviewer, "reason": reason, "effect": effect,
+                "confidence": confidence, "remedy": remedy,
+            },
+        )
+        return _rule_from_dict(resp.json())
+
+    def extract_rules(self, domain: str, *, source_id: str | None = None) -> ExtractRulesResult:
+        params: dict[str, Any] = {"domain": domain}
+        if source_id is not None:
+            params["source_id"] = source_id
+        resp = self._request("POST", "/rules/extract", params=params)
+        body = resp.json()
+        return ExtractRulesResult(
+            chapters_processed=body["chapters_processed"], chapters_skipped=body["chapters_skipped"],
+            candidates_detected=body["candidates_detected"], rules_extracted=body["rules_extracted"],
+            rules_stored=body["rules_stored"],
+            rules_rejected_unsupported=body["rules_rejected_unsupported"],
+            errors=[tuple(e) for e in body["errors"]],
+        )
