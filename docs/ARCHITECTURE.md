@@ -81,6 +81,8 @@ orchestration function where relevant, and a store. Swappability is real —
 | `privacy/` | Phase 7 PII detection — opt-in scan over an already-ingested `Corpus` | `PiiDetector` protocol, `RegexPiiDetector` (email/phone/SSN/credit-card, Luhn-checked, zero new dep), `scan_corpus()` | `test_privacy_regex_detector.py`, `test_privacy_pipeline.py` |
 | `injection/` | Phase 7 prompt-injection defenses — ingestion-time audit + generation-time guard | `InjectionDetector` protocol, `RegexInjectionDetector` (5 common phrasings), `scan_corpus()`, `GuardedGenerator` (`Generator` decorator, `flag`/`exclude` modes, never rewrites `Chunk.text`) | `test_injection_regex_detector.py`, `test_injection_pipeline.py`, `test_injection_guard.py` |
 | `caching/` | Phase 7 semantic/result cache | `ResultCache` protocol, `InMemoryResultCache` (TTL + tenant-tagged entries, zero new dep), `CachingRetriever` (`Retriever` decorator) | `test_caching_memory.py`, `test_caching_retriever.py` |
+| `rules/` | Phase 10: domain-pluggable rule extraction + deterministic rule base — versioned schema, 3-pass extraction pipeline, pure-Python evaluator (+ JSON-Logic-style compiler), dedup/contradiction/exception consistency layer, review workflow, serving query API, pack export/import | `ClaudeRuleCandidateDetector`/`ClaudeRuleExtractor`/`ClaudeRuleVerifier`, `SqliteRuleStore` (immutable-version-on-edit, not merge-not-replace), `ReviewQueue`, `is_low_quality_ocr` | `test_rules_*.py` (11 files, 185 tests) |
+| `domains/lal_kitab/` | Phase 10 §7: first concrete `DomainPack` (sibling package, like `server/`) | `LalKitabOntologyNormalizer` (real Hindi/Sanskrit transliteration tables), `LalKitabPack` (185-entry generated `fact_types()`) | Own suite, 206 tests, run from `domains/lal_kitab/` |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -462,6 +464,101 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   documentation work (more ADR backfill, per-downstream-project
   cookbook entries once Mimisi/Vastu Shastra integration details
   exist) is tracked as open-ended improvement, not a numbered gap.
+
+### Phase 10 — Rule extraction and rule base (domain-pluggable) — 🟡 in progress (as of 2026-10-07)
+
+A new, 10th phase beyond the original 9-phase target spec, added mid-session
+per a separate spec: extract hard, machine-evaluable rules from books (first
+domain: Lal Kitab astrology), store them with provenance, serve them to a
+deterministic engine. See `docs/adr/0013-rule-extraction-domain-pluggable-architecture.md`.
+
+- ✅ **§1 Rule schema** — `ragcore/rules/types.py`. Pydantic + JSON Schema,
+  versioned (`SCHEMA_VERSION`). `Condition` is a discriminated union
+  (`FactPredicate` leaf / `ConditionGroup` AND-OR-NOT composite), compiling
+  to a JSON-Logic-style DSL (`to_json_logic()`) verified, not assumed,
+  semantically equivalent to `ragcore.rules.evaluator.evaluate_condition`
+  via a 5000-case randomized cross-check against a real JSON Logic engine
+  (`json-logic-qubit`, a dev-only dependency) — this caught two real
+  compilation bugs (truthiness-vs-presence for `exists`, missing-fact
+  null-propagation for every comparison operator) before they shipped.
+  `rule_content_hash` is content-addressed over
+  `domain|book_id|normalized_span|conditions|effect` — deliberately
+  excluding chapter/page/chunk_ids/remedy/confidence/rule_type, so the
+  same rule restated elsewhere collapses to one id, and a human *edit*
+  (§4) deliberately does **not** reuse this hash (see §4 below).
+- ✅ **§2 Extraction pipeline** — `ragcore/rules/claude.py` + `pipeline.py`.
+  3 passes (`ClaudeRuleCandidateDetector`/`Extractor`/`Verifier`), chapter-
+  grouped and checkpointed exactly like `build_concepts`/`build_claims`.
+  An unresolvable fact/value (ontology can't normalize it) drops the whole
+  candidate rule rather than storing a weaker one than the span states. A
+  rule failing pass-3 verification is never written to the store at all —
+  "reject anything unsupported" applied literally, upstream of and
+  distinct from human review status. `ocr_quality.is_low_quality_ocr`
+  (replacement-char ratio + alphabetic ratio heuristic — the honest option
+  without `ragcore.loaders` carrying per-word OCR confidence through to
+  `ChunkMeta`) excludes flagged chunks from extraction input; a chapter
+  entirely flagged is skipped with no checkpoint, same "pick up for free
+  later" discipline as a chapter with no concepts yet. 🟡 incremental
+  re-extraction of changed chunks is covered by the existing fingerprint/
+  checkpoint mechanism (unchanged chunks are a checkpoint hit), but
+  nothing yet surgically re-extracts *only* a changed subset within an
+  otherwise-unchanged chapter — out of scope until a real multi-run corpus
+  surfaces whether that granularity is worth the complexity.
+- ✅ **§3 Consistency layer** — `ragcore/rules/consistency.py`. Exact-match
+  dedup (`find_duplicates`), contradiction detection (`find_contradictions`
+  — same flat condition set, same effect category, opposite polarity), and
+  exception detection (`find_exceptions` — an EXCEPTION/CANCELLATION rule
+  whose flat condition set is a proper superset of another's). Stated
+  plainly, not hidden: both contradiction/exception detection require a
+  *flat conjunction* of facts (general AND/OR/NOT subsumption is
+  SAT-equivalent, out of scope) — an `or`/`not` condition is skipped, never
+  mishandled. Conflicts persist via `RuleStore.put_conflicts`/
+  `conflicts_for_rule`, insert-or-ignore by content-addressed
+  `conflict_id` — "never silently overwrite."
+- ✅ **§4 Review workflow** — `ragcore/rules/review.py`. `ReviewQueue.list_pending`
+  (lowest-confidence-first, filterable by domain/book/confidence),
+  `approve`/`reject` (an explicit, narrow in-place mutation of
+  `review_status` only — it's workflow metadata, never part of
+  `rule_content_hash`'s inputs, so this doesn't violate the
+  immutable-version-on-edit discipline rule *content* gets), `edit`
+  (genuinely creates a new version via `RuleStore.supersede`, with a new
+  `rule_id` hashed over the *entire* edited content plus
+  `supersedes=old.rule_id` — deliberately not `rule_content_hash`, which
+  is too coarse for an edit: it ignores fields like `confidence`/`remedy`
+  that a reviewer might be the one changing). Every action appends one
+  `ReviewAuditEntry` in the same transaction as the mutation it describes.
+- ✅ **§5 Rule serving** — `ragcore/rules/evaluator.py` (pure, no LLM;
+  `evaluate_condition`/`match_rules`/`validate_facts`) + `serving.py`
+  (`match_with_provenance` — matches a fact set, groups results by
+  already-stored conflicts, surfaces which matched rules are overridden,
+  verified-only-by-default per §4) + `packs.py` (`export_pack`/`import_pack`
+  as versioned JSON bundles; a tenant-private bundle refuses import under a
+  *different* tenant_id outright, rather than risk a silent cross-tenant
+  `rule_id` collision — `rule_content_hash` doesn't include `tenant_id` by
+  design). 🟡 hybrid mode (RAG retrieval for explanation text + rule
+  matching for facts, citations to book/page) is not yet built as its own
+  function — deferred to land alongside a cookbook example, since it's a
+  thin composition over `Corpus.ask()` + `match_with_provenance` rather
+  than new mechanism.
+- ✅ **§7 Domain pluggability** — `ragcore/rules/domain.py` (`DomainPack`/
+  `OntologyNormalizer`/`FactTypeSpec` protocols) + the first concrete pack,
+  `domains/lal_kitab/` (own sibling package, ADR 0008's pattern). Real
+  Hindi/Sanskrit transliteration tables (not placeholder aliases),
+  `fact_types()` generated (185 specs) rather than hand-enumerated.
+  Proven end to end against the fully generic `ragcore.rules` layer with
+  zero core changes (`domains/lal_kitab/tests/test_integration.py`).
+- ⬜ **§6 Evaluation** — hand-labeled gold set for 3 chapters, recall/
+  precision/condition-accuracy/effect-accuracy, verifier agreement rate,
+  hallucination rate, conflict-detection recall, CI regression gate. Not
+  started — needs either real Lal Kitab source text or a carefully
+  hand-authored synthetic equivalent, and depends on §7's pack existing
+  first (now done).
+- ⬜ **§8 Integration and docs** — API endpoints (`server/`), SDK methods
+  (`sdk/python/`, `sdk/typescript/`), MCP tools (`extract_rules`/
+  `list_rules`/`match_rules`/`review_rule`, `mcp-server/`), tenant
+  isolation for private packs (the storage-level guard in `packs.py`
+  exists; no API-level enforcement yet), extraction-job quota/token-cost
+  metering, schema reference, ontology reference, cookbook. Not started.
 
 ## 3. What's fragile
 
