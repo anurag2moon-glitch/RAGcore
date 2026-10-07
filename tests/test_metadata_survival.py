@@ -87,6 +87,36 @@ def test_ingest_tenant_id_tags_every_chunk_from_that_file(md_book: Path) -> None
     assert all(c.meta.tenant_id == "tenant-a" for c in chunks)
 
 
+def test_license_id_defaults_to_none_when_not_passed(md_book: Path) -> None:
+    corpus, store = _build_corpus()
+    corpus.ingest(md_book)
+
+    assert all(c.meta.license_id is None for c in store.all_chunks())
+
+
+def test_ingest_license_id_tags_every_chunk_from_that_file(md_book: Path) -> None:
+    corpus, store = _build_corpus()
+    corpus.ingest(md_book, license_id="CC-BY-4.0")
+
+    chunks = store.all_chunks()
+    assert chunks
+    assert all(c.meta.license_id == "CC-BY-4.0" for c in chunks)
+
+
+def test_retrieve_filters_by_license_id(md_book: Path, tmp_path: Path) -> None:
+    corpus, _store = _build_corpus()
+    book_b = tmp_path / "book_b.md"
+    book_b.write_text(md_book.read_text(encoding="utf-8") + "\n\nExtra unique text for book b.\n", encoding="utf-8")
+
+    corpus.ingest(md_book, license_id="CC-BY-4.0")
+    corpus.ingest(book_b, license_id="proprietary")
+
+    results = corpus.retrieve("chunking", k=50, filters={"license_id": "CC-BY-4.0"})
+
+    assert results
+    assert all(r.chunk.meta.license_id == "CC-BY-4.0" for r in results)
+
+
 def test_retrieve_filters_by_tenant_id_isolate_tenants(md_book: Path, tmp_path: Path) -> None:
     # Distinct content for book_b, not a copy of md_book: source_id is a
     # content hash (sha256 of file bytes), so two files with identical

@@ -72,6 +72,7 @@ class TenantScopedCorpus:
         *,
         metadata: dict[str, Any] | None = None,
         tenant_id: str | None = None,
+        license_id: str | None = None,
         replace: bool = True,
         on_progress: Callable[[IngestProgress], None] | None = None,
     ) -> IngestReport:
@@ -79,6 +80,7 @@ class TenantScopedCorpus:
             path,
             metadata=metadata,
             tenant_id=self._resolve_tenant_id(tenant_id),
+            license_id=license_id,
             replace=replace,
             on_progress=on_progress,
         )
@@ -89,6 +91,7 @@ class TenantScopedCorpus:
         *,
         metadata: dict[str, Any] | None = None,
         tenant_id: str | None = None,
+        license_id: str | None = None,
         replace: bool = True,
         on_progress: Callable[[IngestProgress], None] | None = None,
         max_workers: int = 4,
@@ -98,6 +101,7 @@ class TenantScopedCorpus:
             paths,
             metadata=metadata,
             tenant_id=self._resolve_tenant_id(tenant_id),
+            license_id=license_id,
             replace=replace,
             on_progress=on_progress,
             max_workers=max_workers,

@@ -149,6 +149,26 @@ class ChunkMeta:
     guard against a caller forgetting the filter — see
     docs/adr/0006-tenant-id-foundation-not-enforcement.md)."""
 
+    # --- licensing (Phase 7 gap item 33) ---
+    license_id: str | None = None
+    """Open vocabulary (e.g. "CC-BY-4.0", "public-domain", "proprietary")
+    — not an enum, since licensing identifiers aren't a closed set this
+    library could enumerate. Named `license_id`, not `license`, to avoid
+    shadowing the `license` builtin (ruff's A002/A003 — the Python
+    stdlib's own site.license() — flags a bare `license` parameter/
+    field name). Opt-in and additive, same shape and same
+    default-`None`-means-unset philosophy as `tenant_id` above: set via
+    `Corpus.ingest(..., license_id=...)`, tagging every chunk from that
+    file uniformly. ragcore does not itself enforce anything based on
+    this value (no built-in "refuse to generate from a proprietary
+    chunk" check) — it exists so a consumer *can* filter or gate on it
+    (e.g. `corpus.retrieve(..., filters={"license_id": {"ne":
+    "proprietary"}})`, or a custom Generator decorator mirroring
+    ragcore.injection.guard.GuardedGenerator's shape), the same
+    "mechanism, not a guarantee" positioning
+    docs/adr/0006-tenant-id-foundation-not-enforcement.md states for
+    tenant_id."""
+
     # --- extensibility ---
     extra: dict[str, Any] = field(default_factory=dict)
 

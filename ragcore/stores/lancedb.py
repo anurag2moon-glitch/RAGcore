@@ -50,6 +50,7 @@ _FILTERABLE_FIELDS = frozenset(
         "context_group_id",
         "token_count",
         "tenant_id",
+        "license_id",
     }
 )
 
@@ -79,6 +80,7 @@ def _build_schema(dim: int) -> "pa.Schema":
             pa.field("token_count", pa.int64()),
             pa.field("extra_json", pa.string()),
             pa.field("tenant_id", pa.string()),
+            pa.field("license_id", pa.string()),
         ]
     )
 
@@ -142,6 +144,7 @@ def _chunk_to_row(chunk: Chunk) -> dict:
         "token_count": m.token_count,
         "extra_json": json.dumps(m.extra),
         "tenant_id": m.tenant_id,
+        "license_id": m.license_id,
     }
 
 
@@ -164,6 +167,7 @@ def _row_to_chunk(row: dict) -> Chunk:
         token_count=row["token_count"],
         extra=json.loads(row["extra_json"]) if row.get("extra_json") else {},
         tenant_id=row.get("tenant_id"),
+        license_id=row.get("license_id"),
     )
     return Chunk(chunk_id=row["chunk_id"], text=row["text"], meta=meta, vector=row.get("vector"))
 
@@ -200,6 +204,8 @@ class LanceDBStore:
             # from an already-open table's schema, which this avoids.
             if "tenant_id" not in self._table.schema.names:
                 self._table.add_columns({"tenant_id": "CAST(NULL AS STRING)"})
+            if "license_id" not in self._table.schema.names:
+                self._table.add_columns({"license_id": "CAST(NULL AS STRING)"})
         else:
             self._table = self._db.create_table(table_name, schema=_build_schema(dim))
 
