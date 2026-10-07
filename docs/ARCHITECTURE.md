@@ -660,8 +660,11 @@ still from scratch.**
 41. ✅ Runbook — `docs/RUNBOOK.md` (same as Phase 8 item 38 above; one
     piece of work, tracked under both since it closes a gap named in
     each phase's own list).
-42. ⬜ Mermaid architecture diagram.
-43. ⬜ Formal data-model reference (beyond `types.py`'s own docstrings).
+42. ✅ Mermaid architecture diagram — `docs/DIAGRAM.md`, commit
+    d84cdc1. Both diagrams rendered and visually verified via
+    `@mermaid-js/mermaid-cli`, not just syntax-checked.
+43. ✅ Formal data-model reference — `docs/DATA_MODEL.md`, commit
+    d84cdc1.
 44. ⬜ Configuration reference.
 45. ⬜ Cookbook promoted from the existing `scripts/*_demo.py` files,
     which are already most of the way there.
