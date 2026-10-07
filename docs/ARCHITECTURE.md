@@ -69,6 +69,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `tenancy/` | Phase 7 multi-tenancy enforcement on top of `ChunkMeta.tenant_id` | `TenantScopedCorpus` (wraps one `Corpus` + fixed `tenant_id`, forces it on every call, raises `TenancyError` on conflict; vector-store path only — see `docs/adr/0006`), `hard_delete()` (per-tenant wipe across the vector store + optional auxiliary stores, safe for Tier 2 stores too — see `docs/adr/0007`) | `test_tenancy.py` |
 | `privacy/` | Phase 7 PII detection — opt-in scan over an already-ingested `Corpus` | `PiiDetector` protocol, `RegexPiiDetector` (email/phone/SSN/credit-card, Luhn-checked, zero new dep), `scan_corpus()` | `test_privacy_regex_detector.py`, `test_privacy_pipeline.py` |
 | `injection/` | Phase 7 prompt-injection defenses — ingestion-time audit + generation-time guard | `InjectionDetector` protocol, `RegexInjectionDetector` (5 common phrasings), `scan_corpus()`, `GuardedGenerator` (`Generator` decorator, `flag`/`exclude` modes, never rewrites `Chunk.text`) | `test_injection_regex_detector.py`, `test_injection_pipeline.py`, `test_injection_guard.py` |
+| `caching/` | Phase 7 semantic/result cache | `ResultCache` protocol, `InMemoryResultCache` (TTL + tenant-tagged entries, zero new dep), `CachingRetriever` (`Retriever` decorator) | `test_caching_memory.py`, `test_caching_retriever.py` |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -330,7 +331,12 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
     multi-tenant `TenantScopedCorpus` until Tier 2 is resolved.
 - ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
   metering ready for billing — none of this exists.
-- ⬜ Semantic/result cache with tenant-scoped invalidation — doesn't exist.
+- ✅ Semantic/result cache with tenant-scoped invalidation —
+  `ragcore.caching` (`ResultCache` protocol, `InMemoryResultCache`
+  default, `CachingRetriever` decorator). `invalidate(tenant_id=...)` is
+  a real targeted operation, not just TTL expiry or clear-everything.
+  Nothing auto-invalidates on a corpus mutation — a consumer calls
+  `invalidate()` itself after whatever change it cares about.
 - 🟡 Data lifecycle — ✅ hard delete:
   `TenantScopedCorpus.hard_delete()` wipes one tenant's chunks from the
   vector store plus every row derived from them in whichever optional
@@ -565,7 +571,8 @@ else (28b, 30+) still from scratch.**
     leakage, not just a missed filter.
 30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
     billing-ready usage metering.
-31. ⬜ Semantic/result cache with tenant-scoped invalidation.
+31. ✅ Semantic/result cache with tenant-scoped invalidation —
+    `ragcore.caching` (commit 9ac827f).
 32. 🟡 Data lifecycle — ✅ hard delete:
     `TenantScopedCorpus.hard_delete()` (commit 38e1b01), proven safe
     against the exact Tier 2 shared-id danger item 28b names. Per-tenant
