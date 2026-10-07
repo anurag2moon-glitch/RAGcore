@@ -67,6 +67,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `versioning/` | Incremental re-ingest (diff/sync), snapshots, rollback | `IngestionManifest`, `plan_sync`/`sync_corpus`, `LanceDBStore.snapshot()`, SQLite online-backup | `test_ingestion_manifest.py`, `test_sync_corpus.py`, `test_snapshot_rollback.py` |
 | `reranking/` | Cross-encoder rerank scoring | `VoyageReranker` (reuses Voyage API, zero new dep) | `test_voyage_reranker.py`, `test_cross_encoder.py` |
 | `tenancy/` | Phase 7 multi-tenancy enforcement on top of `ChunkMeta.tenant_id` | `TenantScopedCorpus` (wraps one `Corpus` + fixed `tenant_id`, forces it on every call, raises `TenancyError` on conflict; vector-store path only — see `docs/adr/0006`), `hard_delete()` (per-tenant wipe across the vector store + optional auxiliary stores, safe for Tier 2 stores too — see `docs/adr/0007`) | `test_tenancy.py` |
+| `privacy/` | Phase 7 PII detection — opt-in scan over an already-ingested `Corpus` | `PiiDetector` protocol, `RegexPiiDetector` (email/phone/SSN/credit-card, Luhn-checked, zero new dep), `scan_corpus()` | `test_privacy_regex_detector.py`, `test_privacy_pipeline.py` |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -337,9 +338,14 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   unchanged — safe even for the Tier 2 stores, proven by a test
   simulating two tenants sharing one content-addressed entity id (see
   commit 38e1b01). Export and retention policy — ⬜, not attempted.
-- ⬜ Encryption at rest/in transit config, audit logs, PII detection,
-  prompt-injection defenses for ingested content, copyright/licensing
-  flag per document — none of this exists.
+- 🟡 PII detection — ✅ `ragcore.privacy` (`PiiDetector` protocol,
+  `RegexPiiDetector` default: email/phone/SSN/credit-card, Luhn-checked;
+  `scan_corpus()`, a standalone pass over an already-ingested `Corpus`,
+  same shape as `run_eval()`/every `build_*()` pass). Encryption at
+  rest/in transit config, audit logs, prompt-injection defenses for
+  ingested content, copyright/licensing flag per document — ⬜, none of
+  this exists yet; most need an actual request/server context (Phase 8)
+  this library doesn't have.
 
 ### Phase 8 — API, SDKs, deployment
 ⬜ **Entirely absent.** No FastAPI/any HTTP server, no OpenAPI spec, no
@@ -553,8 +559,9 @@ else (28b, 30+) still from scratch.**
     `TenantScopedCorpus.hard_delete()` (commit 38e1b01), proven safe
     against the exact Tier 2 shared-id danger item 28b names. Per-tenant
     export, retention policy — ⬜, still open.
-33. ⬜ Encryption at rest/in transit, audit logs, PII detection,
-    prompt-injection defenses, per-document licensing flag.
+33. 🟡 PII detection — ✅ `ragcore.privacy` (commit c85387a). Encryption
+    at rest/in transit, audit logs, prompt-injection defenses,
+    per-document licensing flag — ⬜, still open.
 
 **Phase 8 (API/SDK/deployment):** everything, from scratch, after Phase 7's
 tenancy model is settled (an API surface built before tenant_id exists would
