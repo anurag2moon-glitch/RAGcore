@@ -1,11 +1,11 @@
 """get_corpus — a FastAPI dependency wrapping a single, process-wide
-Corpus instance, built once from environment variables.
+Corpus instance, built once from environment variables. get_scoped_corpus
+layers tenant scoping on top of it via app.auth.get_tenant_id — see that
+module's own docstring for the opt-in, backward-compatible design.
 
-Single-tenant, by design — see docs/adr/0008-api-server-as-sibling-package.md
-for why multi-tenant HTTP routing isn't attempted in this first pass. A
-test overrides this entirely via `app.dependency_overrides[get_corpus]`,
-never by setting these env vars, so tests never need real Voyage/LanceDB
-credentials.
+A test overrides get_corpus entirely via
+`app.dependency_overrides[get_corpus]`, never by setting these env
+vars, so tests never need real Voyage/LanceDB credentials.
 """
 
 from __future__ import annotations
@@ -13,7 +13,11 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
+from fastapi import Depends
+
+from app.auth import get_tenant_id
 from ragcore.corpus import Corpus
+from ragcore.tenancy import TenantScopedCorpus
 
 RAGCORE_DB_PATH_ENV = "RAGCORE_DB_PATH"
 
@@ -31,3 +35,19 @@ def _corpus_singleton() -> Corpus:
 
 def get_corpus() -> Corpus:
     return _corpus_singleton()
+
+
+def get_scoped_corpus(
+    corpus: Corpus = Depends(get_corpus),  # noqa: B008 - FastAPI's own DI idiom
+    tenant_id: str | None = Depends(get_tenant_id),
+) -> Corpus | TenantScopedCorpus:
+    """`tenant_id` is `None` whenever RAGCORE_API_KEYS is unset (auth
+    disabled) — every route gets the raw, unscoped `Corpus`, identical
+    to this server's behavior before auth existed. Once a tenant_id is
+    resolved from a valid API key, every route gets a fresh
+    `TenantScopedCorpus` instead, which forces that tenant_id on every
+    call it makes (ragcore.tenancy's own enforcement, not duplicated
+    here)."""
+    if tenant_id is None:
+        return corpus
+    return TenantScopedCorpus(corpus, tenant_id)

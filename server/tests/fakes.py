@@ -10,6 +10,7 @@ silently drift apart.
 from __future__ import annotations
 
 from ragcore.generation.base import Answer
+from ragcore.retrieval._filters import matches_filter
 from ragcore.types import Retrieved, SourceInfo
 
 
@@ -35,8 +36,19 @@ class InMemoryStore:
             self._chunks[c.chunk_id] = c
 
     def query(self, vector, k, filters=None):
-        chunks = list(self._chunks.values())[:k]
-        return [Retrieved(chunk=c, score=0.9) for c in chunks]
+        """Filters, unlike an earlier version of this fake which ignored
+        `filters` entirely — a real gap this fake previously had,
+        caught by test_retrieve_never_returns_another_tenants_chunks
+        (server/tests/test_auth.py) actually failing against it, not
+        assumed to already be correct. Reuses
+        ragcore.retrieval._filters.matches_filter, the same Python-side
+        Filter DSL evaluator every other in-memory/post-hydration
+        filtering path in this codebase uses, rather than a third
+        reimplementation alongside tests/fakes.py's own `_matches`."""
+        candidates = list(self._chunks.values())
+        if filters:
+            candidates = [c for c in candidates if matches_filter(c.meta, filters)]
+        return [Retrieved(chunk=c, score=0.9) for c in candidates[:k]]
 
     def get(self, chunk_ids):
         return [self._chunks[cid] for cid in chunk_ids if cid in self._chunks]
