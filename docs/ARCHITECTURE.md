@@ -66,6 +66,7 @@ orchestration function where relevant, and a store. Swappability is real —
 | `eval/` | General-purpose retrieval/groundedness eval harness for a *consumer's* corpus | `run_eval()`, `GoldQuestion` JSONL format, recall/precision/nDCG/MRR/latency/tokens + optional groundedness, `ClaudeGoldSetGenerator` (synthetic QA from a real book) | `test_eval_*.py` (5 files); distinct from `tests/integration/eval/`, ragcore's own internal regression harness, now wired into `.github/workflows/ci.yml` on every push/PR |
 | `versioning/` | Incremental re-ingest (diff/sync), snapshots, rollback | `IngestionManifest`, `plan_sync`/`sync_corpus`, `LanceDBStore.snapshot()`, SQLite online-backup | `test_ingestion_manifest.py`, `test_sync_corpus.py`, `test_snapshot_rollback.py` |
 | `reranking/` | Cross-encoder rerank scoring | `VoyageReranker` (reuses Voyage API, zero new dep) | `test_voyage_reranker.py`, `test_cross_encoder.py` |
+| `tenancy/` | Phase 7 multi-tenancy enforcement on top of `ChunkMeta.tenant_id` | `TenantScopedCorpus` (wraps one `Corpus` + fixed `tenant_id`, forces it on every call, raises `TenancyError` on conflict); vector-store path only — see `docs/adr/0006` | `test_tenancy.py` |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -263,7 +264,7 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   (extractors' own call-level detail, router, judge, rewriter, verifier,
   generator) don't have logging yet either.
 
-### Phase 7 — Multi-tenancy and platform — 🟡 foundation step done (2026-10-06), everything else still open
+### Phase 7 — Multi-tenancy and platform — 🟡 foundation + enforcement wrapper done (2026-10-07), everything else still open
 - ✅ `tenant_id` foundation — `ChunkMeta.tenant_id: str | None = None`
   (opt-in, additive), wired through `Corpus.ingest()`/`ingest_many()`'s
   new `tenant_id=...` param, and through `LanceDBStore`'s schema +
@@ -272,14 +273,21 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   migrates transparently on open). See
   `docs/adr/0006-tenant-id-foundation-not-enforcement.md` for exactly
   what this does and doesn't cover.
+- ✅ **Isolation enforcement for the vector-store path** —
+  `ragcore.tenancy.TenantScopedCorpus` wraps a `Corpus` + fixed
+  `tenant_id` and forces it on every `ingest`/`ingest_many`/`retrieve`/
+  `ask`/`get`/`sources`/`remove`/`count` call, raising `TenancyError` on
+  any caller-supplied value that disagrees rather than silently
+  overriding or silently trusting it. **Documented scope limit, not
+  silently assumed**: `GraphRetriever`/`ConceptRetriever`/
+  `HierarchyRetriever` read their own stores, none of which carry
+  `tenant_id` yet (next bullet) — stacking one of those onto a wrapped
+  `Corpus` is not protected by this wrapper.
 - ⬜ `tenant_id` on every *other* store — `SqliteGraphStore`/
   `KuzuGraphStore`, `SqliteConceptStore`, `SqliteClaimStore`,
   `Fts5LexicalStore`, hierarchy/context stores — not done. Only the
-  vector store has it so far.
-- ⬜ **Isolation enforcement** — the field above makes tenant-scoped
-  filtering *possible*; nothing stops a caller from forgetting the
-  filter on a given query and reading across tenants. No guard,
-  middleware, or `Corpus` wrapper that forces it exists yet.
+  vector store has it so far, and only the vector-retrieval path is
+  enforced by `TenantScopedCorpus`.
 - ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting, usage
   metering ready for billing — none of this exists.
 - ⬜ Semantic/result cache with tenant-scoped invalidation — doesn't exist.
@@ -466,16 +474,18 @@ Postgres-against-a-live-server verification remain as real, open work.**
     chunking/embedding/reranker/prompt variants, and an answer-relevance
     metric distinct from groundedness — both still open.
 
-**Phase 7 (multi-tenancy): foundation step 27 done, everything else (28+)
-still from scratch.**
+**Phase 7 (multi-tenancy): foundation steps 27/29 done, everything else
+(28, 30+) still from scratch.**
 27. ✅ `tenant_id` on `ChunkMeta` + `Corpus.ingest()`/`ingest_many()` +
     `LanceDBStore` (schema, filterable fields, transparent migration of
     an existing on-disk table). See
     `docs/adr/0006-tenant-id-foundation-not-enforcement.md`.
 28. ⬜ `tenant_id` on every other store (graph, concepts, claims, lexical,
     hierarchy, context).
-29. ⬜ Isolation enforcement — nothing stops a caller from forgetting the
-    `tenant_id` filter; item 27 makes filtering possible, not mandatory.
+29. ✅ Isolation enforcement for the vector-store path —
+    `ragcore.tenancy.TenantScopedCorpus`. Does not cover graph/concept/
+    hierarchy retrieval layers until item 28 lands (those stores have no
+    `tenant_id` to enforce against yet).
 30. ⬜ API keys, JWT/OAuth, RBAC, per-tenant quotas, rate limiting,
     billing-ready usage metering.
 31. ⬜ Semantic/result cache with tenant-scoped invalidation.
