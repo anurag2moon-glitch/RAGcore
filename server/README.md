@@ -9,7 +9,8 @@ multi-tenant HTTP routing (every route scoped through
 and
 [`docs/adr/0012-api-key-auth-and-multi-tenant-routing.md`](../docs/adr/0012-api-key-auth-and-multi-tenant-routing.md)
 in the repo root for the full reasoning and what's deliberately still
-not here (JWT/OAuth, RBAC, usage metering).
+not here (JWT/OAuth, RBAC, per-tenant quotas, billing-ready token-cost
+metering).
 
 ## Setup
 
@@ -54,6 +55,22 @@ then refills continuously. Exceeding it returns `429`. `/health` is
 always exempt. Unset means no rate limiting at all, identical to this
 server's behavior before this existed.
 
+### Usage metering
+
+```
+GET /usage      # Authorization/X-API-Key required — returns only your own counts
+```
+
+Request counts per endpoint for the calling tenant, e.g.
+`{"GET /sources": 12, "POST /ingest": 2}`. Scoped to request counts,
+not token/cost metering — this server shares one embedder across every
+tenant, so attributing its token usage back to individual tenants
+isn't well-defined without a bigger redesign; see
+`app/usage.py`'s own docstring. `400` in single-tenant mode (no
+tenant_id to meter by). `app.usage.InMemoryUsageMeter` is a reference
+implementation (per-process, resets on restart) — persist this for a
+real deployment.
+
 Visit `/docs` for the interactive OpenAPI UI (generated automatically
 by FastAPI from `app/main.py`'s routes and `app/models.py`'s Pydantic
 models — no separate authoring step).
@@ -80,7 +97,8 @@ overridden with in-memory test doubles via FastAPI's
 | `POST` | `/ask` | `{query, k, filters}` | `400` if the corpus has no `Generator` configured |
 | `GET` | `/sources` | — | |
 | `DELETE` | `/sources/{source_id}` | — | `403` in multi-tenant mode if the source belongs to another tenant |
+| `GET` | `/usage` | — | your own request counts per endpoint; `400` in single-tenant mode |
 
 Every route except `/health` returns `401` in multi-tenant mode if the
-request has no valid API key, and `429` if `RAGCORE_RATE_LIMIT_PER_MINUTE`
-is set and exceeded.
+request has no valid API key, and (except `/usage` itself) `429` if
+`RAGCORE_RATE_LIMIT_PER_MINUTE` is set and exceeded.

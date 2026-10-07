@@ -92,5 +92,18 @@ auth is on, else client IP) token-bucket rate limiter, opt-in via
 `RAGCORE_RATE_LIMIT_PER_MINUTE`, applied as a per-route dependency so
 `/health` stays exempt. This didn't warrant its own ADR — a standard
 token bucket keyed by the tenant_id this same ADR's auth layer already
-resolves, no new design fork. JWT/OAuth, RBAC, and billing-ready usage
-metering remain the open parts of item 30.
+resolves, no new design fork.
+
+**Follow-up, same day**: `server/app/usage.py` adds request-count
+usage metering (`GET /usage`, a tenant's own counts only), the
+"billing-ready usage metering" phrase from item 30 — deliberately
+scoped to request counts, not token/cost. This server shares one
+embedder across every tenant, so attributing its token usage back to
+individual tenants isn't well-defined without redesigning that
+sharing — a real limitation stated plainly in `app/usage.py`'s own
+docstring rather than left for a reader to discover. Request-count
+metering is still genuinely useful (pay-per-request tiers, abuse
+detection) and composes with the real token-cost tracking that already
+exists (`ragcore.embedding.cost.UsageTracker`) if a future redesign
+gives each tenant its own embedder instance. JWT/OAuth, RBAC, and
+per-tenant quotas remain the open parts of item 30.
