@@ -81,8 +81,8 @@ orchestration function where relevant, and a store. Swappability is real —
 | `privacy/` | Phase 7 PII detection — opt-in scan over an already-ingested `Corpus` | `PiiDetector` protocol, `RegexPiiDetector` (email/phone/SSN/credit-card, Luhn-checked, zero new dep), `scan_corpus()` | `test_privacy_regex_detector.py`, `test_privacy_pipeline.py` |
 | `injection/` | Phase 7 prompt-injection defenses — ingestion-time audit + generation-time guard | `InjectionDetector` protocol, `RegexInjectionDetector` (5 common phrasings), `scan_corpus()`, `GuardedGenerator` (`Generator` decorator, `flag`/`exclude` modes, never rewrites `Chunk.text`) | `test_injection_regex_detector.py`, `test_injection_pipeline.py`, `test_injection_guard.py` |
 | `caching/` | Phase 7 semantic/result cache | `ResultCache` protocol, `InMemoryResultCache` (TTL + tenant-tagged entries, zero new dep), `CachingRetriever` (`Retriever` decorator) | `test_caching_memory.py`, `test_caching_retriever.py` |
-| `rules/` | Phase 10: domain-pluggable rule extraction + deterministic rule base — versioned schema, 3-pass extraction pipeline, pure-Python evaluator (+ JSON-Logic-style compiler), dedup/contradiction/exception consistency layer, review workflow, serving query API, pack export/import | `ClaudeRuleCandidateDetector`/`ClaudeRuleExtractor`/`ClaudeRuleVerifier`, `SqliteRuleStore` (immutable-version-on-edit, not merge-not-replace), `ReviewQueue`, `is_low_quality_ocr` | `test_rules_*.py` (11 files, 185 tests) |
-| `domains/lal_kitab/` | Phase 10 §7: first concrete `DomainPack` (sibling package, like `server/`) | `LalKitabOntologyNormalizer` (real Hindi/Sanskrit transliteration tables), `LalKitabPack` (185-entry generated `fact_types()`) | Own suite, 206 tests, run from `domains/lal_kitab/` |
+| `rules/` | Phase 10: domain-pluggable rule extraction + deterministic rule base — versioned schema, 3-pass extraction pipeline, pure-Python evaluator (+ JSON-Logic-style compiler), dedup/contradiction/exception consistency layer, review workflow, serving query API, pack export/import | `ClaudeRuleCandidateDetector`/`ClaudeRuleExtractor`/`ClaudeRuleVerifier`, `SqliteRuleStore` (immutable-version-on-edit, not merge-not-replace), `ReviewQueue`, `is_low_quality_ocr` | `test_rules_*.py` (12 files, 201 tests) |
+| `domains/lal_kitab/` | Phase 10 §7/§6: first concrete `DomainPack` + its hand-labeled gold set (sibling package, like `server/`) | `LalKitabOntologyNormalizer` (real Hindi/Sanskrit transliteration tables), `LalKitabPack` (185-entry generated `fact_types()`) | Own suite, 208 tests, run from `domains/lal_kitab/`; own CI job (`test-lal-kitab`) |
 
 `tests/integration/` (~2,700 lines, real components + deterministic mock
 embedder/extractor, zero network) is a separate, production-scale regression
@@ -547,12 +547,20 @@ deterministic engine. See `docs/adr/0013-rule-extraction-domain-pluggable-archit
   `fact_types()` generated (185 specs) rather than hand-enumerated.
   Proven end to end against the fully generic `ragcore.rules` layer with
   zero core changes (`domains/lal_kitab/tests/test_integration.py`).
-- ⬜ **§6 Evaluation** — hand-labeled gold set for 3 chapters, recall/
-  precision/condition-accuracy/effect-accuracy, verifier agreement rate,
-  hallucination rate, conflict-detection recall, CI regression gate. Not
-  started — needs either real Lal Kitab source text or a carefully
-  hand-authored synthetic equivalent, and depends on §7's pack existing
-  first (now done).
+- ✅ **§6 Evaluation** — `ragcore/rules/eval.py` (domain-agnostic metrics:
+  `evaluate_extraction`/`evaluate_verification`/`evaluate_conflict_detection`/
+  `evaluate_rules`) + `domains/lal_kitab/tests/gold.py` (a hand-authored,
+  explicitly-synthetic 3-chapter gold set — not excerpted from any real
+  published book, the same "synthetic fixture" discipline
+  `tests/integration/`'s own 8 synthetic books already follow) and
+  `test_eval_gold.py`, the CI regression gate (new `test-lal-kitab` job in
+  `.github/workflows/ci.yml`). Deliberately not a live-quality benchmark
+  against a real Claude run — a fixed, deterministic fixture, so a
+  failure here means a regression in the ontology-to-schema construction
+  path or in the eval scoring logic itself, not LLM variance. One real
+  bug this caught before being trusted: a missed gold rule was scored
+  against an unrelated sibling rule sharing its chunk, not treated as
+  "nothing extracted" — fixed in `_candidate_match`.
 - ⬜ **§8 Integration and docs** — API endpoints (`server/`), SDK methods
   (`sdk/python/`, `sdk/typescript/`), MCP tools (`extract_rules`/
   `list_rules`/`match_rules`/`review_rule`, `mcp-server/`), tenant
