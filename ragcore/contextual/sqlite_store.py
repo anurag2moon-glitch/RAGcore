@@ -29,7 +29,8 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS context_blurbs (
     chunk_id TEXT PRIMARY KEY,
     source_id TEXT NOT NULL,
-    blurb TEXT NOT NULL
+    blurb TEXT NOT NULL,
+    tenant_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_context_blurbs_source ON context_blurbs(source_id);
 
@@ -57,6 +58,9 @@ class SqliteContextStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
         self._conn.executescript(_SCHEMA)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(context_blurbs)")}
+        if "tenant_id" not in columns:
+            self._conn.execute("ALTER TABLE context_blurbs ADD COLUMN tenant_id TEXT")
 
     @wrap_backend_errors
     def add_chapter_blurbs(
@@ -66,14 +70,17 @@ class SqliteContextStore:
         context_group_id: str,
         fingerprint: str,
         blurbs: dict[str, str],
+        tenant_id: str | None = None,
     ) -> None:
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.executemany(
-                    "INSERT INTO context_blurbs (chunk_id, source_id, blurb) VALUES (?, ?, ?) "
-                    "ON CONFLICT(chunk_id) DO UPDATE SET blurb = excluded.blurb",
-                    [(chunk_id, source_id, blurb) for chunk_id, blurb in blurbs.items()],
+                    "INSERT INTO context_blurbs (chunk_id, source_id, blurb, tenant_id) "
+                    "VALUES (?, ?, ?, ?) "
+                    "ON CONFLICT(chunk_id) DO UPDATE SET blurb = excluded.blurb, "
+                    "tenant_id = excluded.tenant_id",
+                    [(chunk_id, source_id, blurb, tenant_id) for chunk_id, blurb in blurbs.items()],
                 )
                 self._conn.execute(
                     "INSERT INTO context_runs "

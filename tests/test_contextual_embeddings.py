@@ -90,3 +90,41 @@ def test_remove_source_deletes_blurbs_and_checkpoints(md_book: Path) -> None:
 
     assert store.blurb(chunk.chunk_id) is None
     assert store.checkpoint(source_id, chunk.meta.context_group_id) is None
+
+
+def test_add_chapter_blurbs_persists_the_chunks_own_tenant_id(md_book: Path) -> None:
+    corpus = Corpus(InMemoryStore(dim=8), FakeEmbedder(dim=8))
+    corpus.ingest(md_book, tenant_id="tenant-a")
+    store = SqliteContextStore(":memory:")
+
+    build_contextual_embeddings(corpus, store, _FakeWriter())
+
+    chunk_id = corpus.store.all_chunks()[0].chunk_id
+    row = store._conn.execute(
+        "SELECT tenant_id FROM context_blurbs WHERE chunk_id = ?", (chunk_id,)
+    ).fetchone()
+    assert row == ("tenant-a",)
+
+
+def test_opening_a_pre_tenant_id_table_migrates_via_alter_table(tmp_path: Path) -> None:
+    import sqlite3
+
+    path = tmp_path / "context.sqlite"
+    conn = sqlite3.connect(str(path))
+    conn.execute(
+        "CREATE TABLE context_blurbs (chunk_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, "
+        "blurb TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO context_blurbs (chunk_id, source_id, blurb) VALUES ('c1', 's1', 'hello')"
+    )
+    conn.commit()
+    conn.close()
+
+    store = SqliteContextStore(path)  # must migrate via ALTER TABLE, not raise
+
+    assert store.blurb("c1") == "hello"
+    row = store._conn.execute(
+        "SELECT tenant_id FROM context_blurbs WHERE chunk_id = 'c1'"
+    ).fetchone()
+    assert row == (None,)

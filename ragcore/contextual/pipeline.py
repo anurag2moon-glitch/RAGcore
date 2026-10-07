@@ -142,6 +142,7 @@ def build_contextual_embeddings(
                 context_group_id=context_group_id,
                 fingerprint=fingerprint,
                 blurbs=blurbs_by_id,
+                tenant_id=chapter_chunks[0].meta.tenant_id,
             )
 
             if on_progress:

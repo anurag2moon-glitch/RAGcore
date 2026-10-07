@@ -36,7 +36,13 @@ class ContextStore(Protocol):
     ragcore.concepts.base.ConceptStore's checkpoint methods."""
 
     def add_chapter_blurbs(
-        self, *, source_id: str, context_group_id: str, fingerprint: str, blurbs: dict[str, str]
+        self,
+        *,
+        source_id: str,
+        context_group_id: str,
+        fingerprint: str,
+        blurbs: dict[str, str],
+        tenant_id: str | None = None,
     ) -> None: ...
 
     def checkpoint(self, source_id: str, context_group_id: str) -> str | None: ...
