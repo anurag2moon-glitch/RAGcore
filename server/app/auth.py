@@ -6,14 +6,20 @@ prerequisite for real multi-tenant HTTP routing — an unauthenticated
 shape as the Tier 2 shared-entity-id risk in docs/adr/0007, not actual
 isolation.
 
-**Opt-in, backward compatible**: if `RAGCORE_API_KEYS` is unset, auth
-is disabled entirely and every route keeps operating exactly as before
-this module existed — single-tenant, unauthenticated, over the raw
-`Corpus`. `get_tenant_id()` returns `None` in that case; every call
-site treats `None` as "no tenant scoping," never as "tenant none."
-Setting `RAGCORE_API_KEYS` makes auth mandatory: every request without
-a valid key is rejected, and every operation is scoped through
-`ragcore.tenancy.TenantScopedCorpus`.
+**Opt-in, backward compatible**: if neither `DATABASE_URL` nor
+`RAGCORE_API_KEYS` is set, auth is disabled entirely and every route
+keeps operating exactly as before this module existed — single-tenant,
+unauthenticated, over the raw `Corpus`. `get_tenant_id()` returns
+`None` in that case; every call site treats `None` as "no tenant
+scoping," never as "tenant none." Once either is set, auth becomes
+mandatory: every request without a valid key is rejected, and every
+operation is scoped through `ragcore.tenancy.TenantScopedCorpus`.
+
+**`DATABASE_URL` takes precedence over `RAGCORE_API_KEYS`** when both
+are set (ADR 0016) — `PostgresApiKeyStore` (persistent, real key
+lifecycle management) is what a staging/prod deployment should use;
+`RAGCORE_API_KEYS` (an in-memory, env-var-defined key list) stays
+around purely for local dev without a Postgres container running.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ from typing import Protocol, runtime_checkable
 from fastapi import Depends, HTTPException, Request
 
 from app.env_parsing import parse_colon_pairs
+from app.postgres_auth import PostgresApiKeyStore
 from app.settings import get_settings
 
 
@@ -52,9 +59,11 @@ class InMemoryApiKeyStore:
 @lru_cache(maxsize=1)
 def _api_key_store_singleton() -> ApiKeyStore | None:
     settings = get_settings()
-    if not settings.ragcore_api_keys:
-        return None
-    return InMemoryApiKeyStore(parse_colon_pairs(settings.ragcore_api_keys, env_var="RAGCORE_API_KEYS"))
+    if settings.database_url:
+        return PostgresApiKeyStore(settings.database_url)
+    if settings.ragcore_api_keys:
+        return InMemoryApiKeyStore(parse_colon_pairs(settings.ragcore_api_keys, env_var="RAGCORE_API_KEYS"))
+    return None
 
 
 def get_api_key_store() -> ApiKeyStore | None:

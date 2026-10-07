@@ -14,12 +14,22 @@ dependencies = [
     "uvicorn>=0.29",
     "python-multipart>=0.0.9",
     "pydantic-settings>=2.6",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+    "rq>=1.16",
+    "redis>=5.0",
+    "boto3>=1.34",
 ]
 # ragcore itself is a sibling-package dependency, not declared here: a
 # relative `file://../` direct reference isn't portable across pip's
 # URL handling on every platform (confirmed directly: pip rejects it as
 # a "non-local file URI" even though it resolves to a local path).
 # Install both in one venv with: pip install -e .. -e ".[dev]"
+#
+# psycopg/alembic/rq/redis/boto3 are this server's own choice of driver
+# for Postgres/the async ingest job queue/MinIO respectively (ADR 0014) -
+# psycopg specifically reuses ragcore[postgres]'s own driver choice
+# rather than introducing a second Postgres driver.
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
@@ -29,3 +39,7 @@ packages = ["app"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "postgres: hits a real Postgres server via RAGCORE_TEST_POSTGRES_URL; excluded by default, skips cleanly when that env var is unset",
+]
+addopts = "-m 'not postgres'"
