@@ -31,6 +31,16 @@ from ragcore.rules.consistency import (
     resolve_precedence,
 )
 from ragcore.rules.domain import DomainPack, FactTypeSpec, OntologyNormalizer
+from ragcore.rules.eval import (
+    GoldConflictPair,
+    GoldRule,
+    GoldVerification,
+    RuleEvalReport,
+    evaluate_conflict_detection,
+    evaluate_extraction,
+    evaluate_rules,
+    evaluate_verification,
+)
 from ragcore.rules.evaluator import evaluate_condition, match_rules, validate_facts
 from ragcore.rules.ocr_quality import is_low_quality_ocr
 from ragcore.rules.packs import (
@@ -68,6 +78,9 @@ __all__ = [
     "Effect",
     "FactPredicate",
     "FactTypeSpec",
+    "GoldConflictPair",
+    "GoldRule",
+    "GoldVerification",
     "MatchedRule",
     "OntologyNormalizer",
     "PackImportError",
@@ -78,6 +91,7 @@ __all__ = [
     "Rule",
     "RuleCandidateDetector",
     "RuleConflict",
+    "RuleEvalReport",
     "RuleExtractionProgress",
     "RuleExtractionReport",
     "RuleExtractor",
@@ -91,6 +105,10 @@ __all__ = [
     "build_rules",
     "detect_conflicts",
     "evaluate_condition",
+    "evaluate_conflict_detection",
+    "evaluate_extraction",
+    "evaluate_rules",
+    "evaluate_verification",
     "export_pack",
     "find_contradictions",
     "find_duplicates",
