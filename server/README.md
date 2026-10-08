@@ -11,6 +11,11 @@ and
 in the repo root for the full reasoning and what's deliberately still
 not here (JWT/OAuth, RBAC, billing-ready token-cost metering).
 
+**Running this as a real staging deployment (Docker Compose, Postgres,
+Redis, MinIO, backup/restore, CI)?** See
+[`docs/DEPLOYMENT.md`](../docs/DEPLOYMENT.md) — this README covers
+local dev only.
+
 ## Setup
 
 ```

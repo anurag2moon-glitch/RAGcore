@@ -580,6 +580,67 @@ deterministic engine. See `docs/adr/0013-rule-extraction-domain-pluggable-archit
   One real, pre-existing gap surfaced while wiring `/rules/extract`
   through `TenantScopedCorpus` — see "What's fragile" below.
 
+### Phase 11 — Minimal staging deployment (single node, production-shaped)
+
+An 11th phase, closing gap item 36 below (Docker Compose/manifests,
+Redis) plus most of items 37-38's spirit (ops basics, a tested
+backup/restore). ADRs 0014-0022 cover every decision in detail; this
+is the summary.
+
+- ✅ **Containers** — one multi-stage `server/Dockerfile`, three
+  `--target` stages (api/worker/migrate), non-root user, pinned
+  dependencies via a committed lockfile (`server/requirements.lock.txt`).
+  `docker-compose.yml`: api/worker/migrate/postgres/redis/minio/
+  minio-init/otel-collector, one `docker compose up`. ADR 0018.
+- ✅ **Configuration** — `app/settings.py`'s `Settings` (pydantic-settings,
+  fail-fast at import time), consolidating 3 duplicated env-parsers into
+  `app/env_parsing.py`. ADR 0015. Tenant data paths/object storage
+  prefixes/table names centralized in `app/naming.py`. Secrets via a
+  mounted file (`RAGCORE_SECRETS_DIR`, confirmed directly that a real
+  env var still wins over a file) + three starter profiles
+  (`server/.env.{dev,staging,prod}.example`). ADR 0021.
+- ✅ **Database/migrations** — Alembic, raw SQL (no ORM anywhere else
+  in this codebase), `tenants`/`api_keys` tables. `PostgresApiKeyStore`
+  (same "written/reviewed, untested against a live server, opt-in
+  `pytest -m postgres`" honesty as `ragcore.ingestion.postgres_store`,
+  ADR 0005). Seed script. ADR 0016.
+- ✅ **Async ingestion** — `POST /ingest` now `202` + job id (content-
+  addressed S3/MinIO handoff between api/worker, RQ/Redis queue).
+  `rq.Worker.request_stop`'s own warm-shutdown behavior (confirmed via
+  source inspection) satisfies "finish the in-flight job before
+  exiting" with zero custom signal handling. ADR 0017.
+- ✅ **Ops basics** — liveness (`/health`, `/health/live`) vs. readiness
+  (`/health/ready`, fresh connection per check, never a cached
+  singleton) split. Structured JSON logging + request IDs via a
+  `contextvars.ContextVar` (propagates correctly across uvicorn's async
+  `await` points, unlike a thread-local). A hand-written `/metrics`
+  (Prometheus text format) distinct from `fastapi[opentelemetry]`'s own
+  OTLP metrics/tracing (native to FastAPI 0.142+, confirmed directly —
+  on by default even with no `telemetry={}` kwarg passed) wired to a
+  local collector in Compose. ADR 0019. Backup/restore for Postgres +
+  the LanceDB/SQLite/tenant-data volume + the raw-files bucket, all
+  landing in the same MinIO bucket under a `backups/` prefix — verified
+  with a real round-trip (moto + real temp dirs), not just reviewed.
+  ADR 0020.
+- ✅ **CI** — a blocking `mypy` gate for `server/` (zero findings once
+  two real pre-existing issues were fixed — no backlog to excuse
+  report-only, unlike the repo-wide ruff step). Image builds for all
+  three Dockerfile targets. A real integration test against the
+  Compose stack (ingest/search/citation) using a deterministic offline
+  embedder+generator (`app/ci_fakes.py` — confirmed two texts sharing
+  vocabulary score meaningfully above zero similarity, two sharing none
+  score exactly zero) since no Voyage/Anthropic secret is assumed to
+  exist in CI, matching this repo's own `pytest -m live` exclusion.
+  ADR 0022.
+- ✅ **Docs** — this section plus `docs/DEPLOYMENT.md` (setup, config
+  reference, backup/restore, troubleshooting).
+- ⬜ Still open, deliberately out of scope per this phase's own rule:
+  Kubernetes/autoscaling (explicitly deferred to a future ADR, never
+  attempted here); a hardened prod rollout beyond the starter profile;
+  the Python/TypeScript SDKs' `ingest()` methods still assume the old
+  synchronous `/ingest` contract (flagged in ADR 0017's own
+  "Consequences," not yet fixed).
+
 ## 3. What's fragile
 
 1. ~~Unwrapped backend exceptions throughout the storage layer~~
@@ -822,7 +883,10 @@ still from scratch.**
 35. 🟡 Python SDK (`sdk/python/`, commit faaeccd) — ✅. MCP server
     (`mcp-server/`, commit b0e85c2) — ✅. TypeScript SDK
     (`sdk/typescript/`, commit 2ba96e6) — ✅. gRPC — ⬜, still open.
-36. ⬜ Docker Compose/Helm/K8s manifests, Redis, feature flags.
+36. 🟡 Docker Compose + Redis — ✅ Phase 11 (`docker-compose.yml`,
+    `server/Dockerfile`, ADR 0014/0018). Helm/K8s manifests, feature
+    flags — ⬜, deliberately deferred (Phase 11's own explicit rule: no
+    Kubernetes/autoscaling yet, a future ADR).
 37. ⬜ Load tests (Locust/k6).
 38. ✅ Backup/restore runbook — `docs/RUNBOOK.md`, commit eff4b1c.
 39. ✅ Multi-tenant HTTP routing on top of `server/` — commit 707cd52,
