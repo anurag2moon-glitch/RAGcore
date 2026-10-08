@@ -2,11 +2,16 @@
 Corpus dependency is overridden entirely (ragcore's own FakeEmbedder/
 InMemoryStore test doubles), never via RAGCORE_DB_PATH, so these tests
 need no real Voyage/LanceDB credentials.
+
+`/ingest` is async as of ADR 0014 - every test that ingests uses the
+`ingest_sync` fixture (server/tests/conftest.py), which drives the
+real enqueue -> worker -> GET /jobs/{id} round trip and hands back the
+final response, so assertions stay as close to the old synchronous
+shape as the contract change allows (`resp.json()["result"][...]`
+instead of `resp.json()[...]`).
 """
 
 from __future__ import annotations
-
-import io
 
 import pytest
 from app.corpus_provider import get_corpus
@@ -18,8 +23,12 @@ from ragcore.corpus import Corpus
 
 
 @pytest.fixture
-def client() -> TestClient:
-    corpus = Corpus(InMemoryStore(), FakeEmbedder())
+def corpus() -> Corpus:
+    return Corpus(InMemoryStore(), FakeEmbedder())
+
+
+@pytest.fixture
+def client(corpus: Corpus) -> TestClient:
     app.dependency_overrides[get_corpus] = lambda: corpus
     with TestClient(app) as c:
         yield c
@@ -27,9 +36,13 @@ def client() -> TestClient:
 
 
 @pytest.fixture
-def client_with_generator() -> TestClient:
-    corpus = Corpus(InMemoryStore(), FakeEmbedder(), generator=FakeGenerator())
-    app.dependency_overrides[get_corpus] = lambda: corpus
+def corpus_with_generator() -> Corpus:
+    return Corpus(InMemoryStore(), FakeEmbedder(), generator=FakeGenerator())
+
+
+@pytest.fixture
+def client_with_generator(corpus_with_generator: Corpus) -> TestClient:
+    app.dependency_overrides[get_corpus] = lambda: corpus_with_generator
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
@@ -41,11 +54,13 @@ def test_health(client: TestClient) -> None:
     assert resp.json() == {"status": "ok"}
 
 
-def test_ingest_then_sources_then_retrieve(client: TestClient) -> None:
+def test_ingest_then_sources_then_retrieve(client: TestClient, corpus: Corpus, ingest_sync) -> None:
     content = b"# Chapter 1\n\nSome content about chunking and embeddings.\n"
-    resp = client.post("/ingest", files={"file": ("book.md", io.BytesIO(content), "text/markdown")})
+    resp = ingest_sync(client, "book.md", content, corpus)
     assert resp.status_code == 200
-    report = resp.json()
+    body = resp.json()
+    assert body["status"] == "finished"
+    report = body["result"]
     assert report["chunks_ingested"] > 0
     source_id = report["source_ids"][0]
 
@@ -66,11 +81,11 @@ def test_ask_without_a_generator_returns_400(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
-def test_ask_with_a_generator_returns_an_answer(client_with_generator: TestClient) -> None:
+def test_ask_with_a_generator_returns_an_answer(
+    client_with_generator: TestClient, corpus_with_generator: Corpus, ingest_sync
+) -> None:
     content = b"# Chapter 1\n\nSome content about chunking.\n"
-    client_with_generator.post(
-        "/ingest", files={"file": ("book.md", io.BytesIO(content), "text/markdown")}
-    )
+    ingest_sync(client_with_generator, "book.md", content, corpus_with_generator)
 
     resp = client_with_generator.post("/ask", json={"query": "chunking"})
 
@@ -79,12 +94,10 @@ def test_ask_with_a_generator_returns_an_answer(client_with_generator: TestClien
     assert "answer to" in body["text"]
 
 
-def test_delete_source_removes_its_chunks(client: TestClient) -> None:
+def test_delete_source_removes_its_chunks(client: TestClient, corpus: Corpus, ingest_sync) -> None:
     content = b"# Chapter 1\n\nSome content.\n"
-    ingest_resp = client.post(
-        "/ingest", files={"file": ("book.md", io.BytesIO(content), "text/markdown")}
-    )
-    source_id = ingest_resp.json()["source_ids"][0]
+    ingest_resp = ingest_sync(client, "book.md", content, corpus)
+    source_id = ingest_resp.json()["result"]["source_ids"][0]
 
     delete_resp = client.delete(f"/sources/{source_id}")
 
@@ -93,8 +106,32 @@ def test_delete_source_removes_its_chunks(client: TestClient) -> None:
     assert client.get("/sources").json() == []
 
 
-def test_unsupported_file_extension_returns_400(client: TestClient) -> None:
-    resp = client.post(
-        "/ingest", files={"file": ("book.xyz", io.BytesIO(b"content"), "application/octet-stream")}
-    )
-    assert resp.status_code == 400
+def test_unsupported_file_extension_fails_the_job_not_the_enqueue(
+    client: TestClient, corpus: Corpus, ingest_sync
+) -> None:
+    """Enqueuing always succeeds (the upload itself doesn't know the
+    extension is unsupported) - the failure now surfaces as the job's
+    own status, not a synchronous 400, which is the one real
+    behavioral consequence of ADR 0014's async /ingest contract this
+    test exists to pin down."""
+    resp = ingest_sync(client, "book.xyz", b"content", corpus)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "failed"
+    assert body["error"]
+
+
+def test_get_job_status_for_an_unknown_job_id_returns_404(
+    client: TestClient, _async_ingest_infra
+) -> None:
+    resp = client.get("/jobs/nonexistent-job-id")
+    assert resp.status_code == 404
+
+
+def test_get_job_status_without_redis_configured_returns_503(client: TestClient) -> None:
+    """No _async_ingest_infra fixture here deliberately - REDIS_URL is
+    genuinely unset in this test, pinning the distinct failure mode
+    from the test above (unreachable queue vs. a real but unknown
+    job_id)."""
+    resp = client.get("/jobs/nonexistent-job-id")
+    assert resp.status_code == 503

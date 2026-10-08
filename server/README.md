@@ -27,6 +27,30 @@ export RAGCORE_DB_PATH=./data/corpus.lancedb
 uvicorn app.main:app --reload
 ```
 
+### Async ingestion (ADR 0014/0017)
+
+```
+export REDIS_URL=redis://localhost:6379/0
+export S3_ENDPOINT_URL=http://localhost:9000   # MinIO or any S3-compatible endpoint
+export S3_ACCESS_KEY_ID=...
+export S3_SECRET_ACCESS_KEY=...
+export S3_BUCKET=ragcore
+
+# in one terminal: the API, as above
+uvicorn app.main:app --reload
+
+# in another: the worker (the module path must stay importable - see
+# app/worker/ingest_job.py's own docstring for why)
+rq worker --url "$REDIS_URL" ingest
+```
+
+`POST /ingest` returns immediately with `{job_id, source_id, status:
+"queued"}` — `GET /jobs/{job_id}` to poll (`status`: `queued` ->
+`started` -> `finished` or `failed`; `result` populated once
+`finished`, `error` once `failed`). Without `REDIS_URL`/`S3_*` set,
+`/ingest` fails fast with `503` rather than silently falling back to
+the old synchronous behavior (see ADR 0014's own "Consequences").
+
 ### Multi-tenant mode (optional)
 
 ```
@@ -151,7 +175,8 @@ overridden with in-memory test doubles via FastAPI's
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | `GET` | `/health` | — | liveness check, never requires a key |
-| `POST` | `/ingest` | multipart `file` | dispatches by the uploaded filename's extension; tags every chunk with the resolved tenant_id in multi-tenant mode |
+| `POST` | `/ingest` | multipart `file` | **async as of ADR 0014/0017** — uploads to object storage and enqueues a job, returns `202 {job_id, source_id, status}`; `503` if `REDIS_URL`/`S3_*` aren't configured |
+| `GET` | `/jobs/{job_id}` | — | poll for ingestion job status/result; `404` unknown job_id, `503` if `REDIS_URL` isn't configured |
 | `POST` | `/retrieve` | `{query, k, filters, min_score}` | |
 | `POST` | `/ask` | `{query, k, filters}` | `400` if the corpus has no `Generator` configured |
 | `GET` | `/sources` | — | |

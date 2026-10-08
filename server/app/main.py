@@ -9,6 +9,7 @@ Run: uvicorn app.main:app --reload (from server/, with RAGCORE_DB_PATH set).
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import tempfile
 from pathlib import Path
@@ -16,13 +17,17 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.auth import get_tenant_id
 from app.corpus_provider import get_scoped_corpus
+from app.jobs import fetch_job, get_ingest_queue
 from app.models import (
     AskRequest,
     AskResponse,
     ErrorResponse,
     HealthResponse,
+    IngestJobEnqueuedResponse,
     IngestResponse,
+    JobStatusResponse,
     RetrievedChunkResponse,
     RetrieveRequest,
     RetrieveResponse,
@@ -30,9 +35,11 @@ from app.models import (
 )
 from app.quota import enforce_quota
 from app.rate_limit import enforce_rate_limit
+from app.raw_files_provider import get_raw_file_store
 from app.rules_routes import router as rules_router
 from app.settings import get_settings
 from app.usage import get_my_usage, record_usage
+from app.worker.ingest_job import run_ingest_job
 from ragcore.corpus import Corpus
 from ragcore.errors import RagcoreError, TenancyError
 from ragcore.tenancy import TenantScopedCorpus
@@ -80,23 +87,60 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
-@app.post("/ingest", response_model=IngestResponse, dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])
+@app.post(
+    "/ingest", response_model=IngestJobEnqueuedResponse, status_code=202,
+    dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)],
+)
 async def ingest(
     file: UploadFile,
-    corpus: ScopedCorpus = Depends(get_scoped_corpus),  # noqa: B008 - FastAPI's own DI idiom
-) -> IngestResponse:
-    """Multipart file upload — not a server-local path, since accepting
-    only a path a remote caller can't actually control would defeat the
-    point of an HTTP ingest endpoint. Saved to a temp file preserving
-    the original filename's extension (ragcore's LoaderRegistry
-    dispatches by extension, see ragcore/loaders/__init__.py)."""
+    tenant_id: str | None = Depends(get_tenant_id),
+) -> IngestJobEnqueuedResponse:
+    """As of ADR 0014, ingestion is an async job, not run inline in
+    this request: the uploaded file is content-hashed (the same
+    `sha256(file bytes)` scheme every ragcore `Loader` independently
+    re-derives as `source_id` — the two must agree, since the worker
+    never sees the original filename-based identity, only this hash),
+    uploaded to object storage under that hash, and a job referencing
+    it is enqueued. `GET /jobs/{job_id}` polls for the result. Requires
+    `REDIS_URL`/`S3_*` to be configured (ADR 0014) — fails with a clear
+    `503` otherwise, rather than silently falling back to the old
+    synchronous path (see that ADR's own "Consequences" for why there
+    is deliberately no such fallback)."""
+    content = await file.read()
+    source_id = hashlib.sha256(content).hexdigest()
+
+    try:
+        store = get_raw_file_store()
+        queue = get_ingest_queue()
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
     suffix = Path(file.filename or "").suffix
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=True) as tmp:
-        content = await file.read()
+    with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
         tmp.write(content)
         tmp.flush()
-        report = corpus.ingest(Path(tmp.name))
-    return IngestResponse.from_report(report)
+        store.put(source_id, Path(tmp.name))
+
+    job = queue.enqueue(run_ingest_job, source_id=source_id, tenant_id=tenant_id)
+    return IngestJobEnqueuedResponse(job_id=job.id, source_id=source_id)
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def get_job_status(job_id: str) -> JobStatusResponse:
+    try:
+        job = fetch_job(job_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"no job found with job_id {job_id!r}")
+
+    status = job.get_status()
+    result = IngestResponse(**job.return_value()) if status == "finished" else None
+    error = None
+    if status == "failed":
+        latest = job.latest_result()
+        error = latest.exc_string if latest is not None else "job failed (no result recorded)"
+    return JobStatusResponse(job_id=job.id, status=status, result=result, error=error)
 
 
 @app.post("/retrieve", response_model=RetrieveResponse, dependencies=[Depends(enforce_rate_limit), Depends(enforce_quota), Depends(record_usage)])

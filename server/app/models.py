@@ -34,6 +34,29 @@ class IngestResponse(BaseModel):
         )
 
 
+class IngestJobEnqueuedResponse(BaseModel):
+    """`POST /ingest`'s response as of ADR 0014: ingestion is now an
+    async job, not run inline in the request — this names the job and
+    the object storage key the uploaded file was staged under, not an
+    `IngestResponse` (which doesn't exist yet at this point)."""
+
+    job_id: str
+    source_id: str
+    status: str = "queued"
+
+
+class JobStatusResponse(BaseModel):
+    """`GET /jobs/{job_id}`'s response. `status` is one of RQ's own
+    `JobStatus` values (`queued`/`started`/`finished`/`failed`/...).
+    `result` is only populated once `status == "finished"`; `error`
+    only once `status == "failed"`."""
+
+    job_id: str
+    status: str
+    result: IngestResponse | None = None
+    error: str | None = None
+
+
 class SourceResponse(BaseModel):
     source_id: str
     path: str
