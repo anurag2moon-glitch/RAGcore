@@ -1,0 +1,133 @@
+name: ragcore
+
+# Minimal staging stack (docs/adr/0014): one `docker compose up` brings
+# up everything - api, worker, postgres, redis, minio, plus the
+# one-shot migrate service that must complete before api/worker start.
+# See docs/DEPLOYMENT.md for the full reference; server/.env.example
+# for every variable, copied to .env before running this.
+
+x-app-env: &app-env
+  env_file:
+    - server/.env
+  environment:
+    RAGCORE_DB_PATH: /data/corpus.lancedb
+    RAGCORE_RULES_DB_PATH: /data/rules.sqlite3
+    TENANT_DATA_ROOT: /data/tenants
+    DATABASE_URL: postgresql://ragcore:ragcore@postgres:5432/ragcore
+    REDIS_URL: redis://redis:6379/0
+    S3_ENDPOINT_URL: http://minio:9000
+    S3_BUCKET: ragcore
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ragcore
+      POSTGRES_PASSWORD: ragcore
+      POSTGRES_DB: ragcore
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ragcore -d ragcore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ragcore
+      MINIO_ROOT_PASSWORD: ragcore-dev-secret
+    ports:
+      - "9001:9001"  # console, optional - the API/worker only ever talk to 9000, in-network
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      sh -c "
+        mc alias set local http://minio:9000 ragcore ragcore-dev-secret &&
+        mc mb --ignore-existing local/ragcore
+      "
+    restart: "no"
+
+  migrate:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: migrate
+    <<: *app-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: api
+    <<: *app-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - lancedb_data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+      target: worker
+    <<: *app-env
+    volumes:
+      - lancedb_data:/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector:latest
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./server/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  minio_data:
+  lancedb_data:

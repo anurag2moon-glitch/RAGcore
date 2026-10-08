@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [
-    "fastapi>=0.110",
+    "fastapi[opentelemetry]>=0.142",
     "uvicorn>=0.29",
     "python-multipart>=0.0.9",
     "pydantic-settings>=2.6",
@@ -30,6 +30,17 @@ dependencies = [
 # for Postgres/the async ingest job queue/MinIO respectively (ADR 0014) -
 # psycopg specifically reuses ragcore[postgres]'s own driver choice
 # rather than introducing a second Postgres driver.
+#
+# fastapi[opentelemetry] (the deployment request's own ask: "OpenTelemetry
+# tracing wired to a local collector in Compose") - FastAPI 0.142+ ships
+# native OpenTelemetry integration (FastAPI(telemetry={...}), defaulting
+# to on even when the kwarg is omitted entirely - confirmed directly,
+# not assumed from the changelog) that auto-configures an OTLP http/
+# protobuf exporter from OTEL_EXPORTER_OTLP_ENDPOINT when this extra's
+# packages (opentelemetry-sdk + the OTLP exporter) are installed; the
+# >=0.142 floor is pinned specifically because this feature doesn't
+# exist in the >=0.110 floor this dependency previously had - installing
+# an older 0.110.x would silently have no telemetry() kwarg at all.
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27", "moto[s3]>=5", "fakeredis>=2.20"]

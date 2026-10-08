@@ -1,0 +1,39 @@
+# Build context for server/Dockerfile is the repo root - this keeps
+# that context (and therefore every build stage's COPY surface) small
+# and free of anything that shouldn't end up in an image layer.
+
+.git/
+.venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+node_modules/
+samples/
+*.lance/
+*.ragcore-db/
+
+tests/
+server/tests/
+mcp-server/tests/
+sdk/*/tests/
+domains/*/tests/
+tests/integration/
+
+.env
+.env.*
+!.env.example
+!*/.env.example
+
+server/data/
+
+docs/
+*.md
+!server/README.md
+.github/

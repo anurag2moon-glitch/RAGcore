@@ -1,0 +1,27 @@
+# Minimal local OpenTelemetry collector for the Compose stack (the
+# deployment request's own ask: "OpenTelemetry tracing wired to a
+# local collector in Compose"). Receives OTLP from the api/worker
+# containers and logs spans to its own stdout - the simplest possible
+# exporter, enough to confirm tracing is actually wired end to end
+# without standing up a second real backend (Jaeger/Tempo/etc.) this
+# pass doesn't need. Swap the `exporters`/`service.pipelines` below for
+# a real backend later without touching the api/worker containers at
+# all - they only ever know about this collector's own OTLP endpoint.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [debug]
