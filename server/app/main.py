@@ -28,6 +28,7 @@ from app.models import (
     IngestJobEnqueuedResponse,
     IngestResponse,
     JobStatusResponse,
+    ReadinessResponse,
     RetrievedChunkResponse,
     RetrieveRequest,
     RetrieveResponse,
@@ -36,6 +37,7 @@ from app.models import (
 from app.quota import enforce_quota
 from app.rate_limit import enforce_rate_limit
 from app.raw_files_provider import get_raw_file_store
+from app.readiness import run_readiness_checks
 from app.rules_routes import router as rules_router
 from app.settings import get_settings
 from app.usage import get_my_usage, record_usage
@@ -84,7 +86,33 @@ async def ragcore_error_handler(_request, exc: RagcoreError) -> JSONResponse:
 
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
+    """Liveness only: "is the process up and able to handle a
+    request" — no I/O, never fails once the process has started.
+    Kept as the pre-existing path (nothing that already depends on
+    `/health` meaning liveness needs to change); `/health/live` is the
+    same check under the more explicit, Kubernetes-convention name."""
     return HealthResponse(status="ok")
+
+
+@app.get("/health/live", response_model=HealthResponse)
+def health_live() -> HealthResponse:
+    return HealthResponse(status="ok")
+
+
+@app.get("/health/ready", response_model=ReadinessResponse)
+def health_ready() -> ReadinessResponse:
+    """Readiness: actually reaches whichever of Postgres/Redis/the
+    corpus's own vector store this deployment configured. `503` (via
+    the raised HTTPException below) if any *configured* dependency's
+    check failed — an unconfigured one is absent from `checks`
+    entirely and never counts as a failure, so a minimal deployment
+    with none of them set is trivially "ready"."""
+    checks = run_readiness_checks()
+    if any(v != "ok" for v in checks.values()):
+        raise HTTPException(
+            status_code=503, detail=ReadinessResponse(status="not ready", checks=checks).model_dump()
+        )
+    return ReadinessResponse(status="ready", checks=checks)
 
 
 @app.post(

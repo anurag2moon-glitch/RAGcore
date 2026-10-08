@@ -132,5 +132,17 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class ReadinessResponse(BaseModel):
+    """`GET /health/ready`'s response: per-dependency reachability for
+    whichever of Postgres/Redis/the vector store this deployment
+    actually has configured — a dependency this server was never told
+    about (e.g. `DATABASE_URL` unset) is simply absent from `checks`,
+    never reported as failing. `status` is `"ready"` only if every
+    *configured* dependency's own check succeeded."""
+
+    status: str
+    checks: dict[str, str]
+
+
 class ErrorResponse(BaseModel):
     detail: str

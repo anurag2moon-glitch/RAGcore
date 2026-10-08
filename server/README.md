@@ -174,7 +174,8 @@ overridden with in-memory test doubles via FastAPI's
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| `GET` | `/health` | — | liveness check, never requires a key |
+| `GET` | `/health`, `/health/live` | — | liveness check (process up, no I/O), never requires a key |
+| `GET` | `/health/ready` | — | readiness: `503` if any *configured* dependency (Postgres/Redis/the vector store) is unreachable; an unconfigured one never counts as a failure |
 | `POST` | `/ingest` | multipart `file` | **async as of ADR 0014/0017** — uploads to object storage and enqueues a job, returns `202 {job_id, source_id, status}`; `503` if `REDIS_URL`/`S3_*` aren't configured |
 | `GET` | `/jobs/{job_id}` | — | poll for ingestion job status/result; `404` unknown job_id, `503` if `REDIS_URL` isn't configured |
 | `POST` | `/retrieve` | `{query, k, filters, min_score}` | |
