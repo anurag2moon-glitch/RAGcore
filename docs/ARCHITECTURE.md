@@ -396,7 +396,7 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   exists yet; both need an actual request/server context (Phase 8)
   this library doesn't have.
 
-### Phase 8 — API, SDKs, deployment — 🟡 FastAPI service started (2026-10-07), everything else still open
+### Phase 8 — API, SDKs, deployment — 🟡 FastAPI service + SDKs done (2026-10-07); Docker/Compose/Redis closed by Phase 11 below; gRPC/Helm/k8s/feature flags/load tests still open
 - ✅ **Reference FastAPI server** — `server/` (sibling package to
   `ragcore/`, own `pyproject.toml`, zero new dependencies added to
   `ragcore`'s own — see `docs/adr/0008-api-server-as-sibling-package.md`).
@@ -428,8 +428,11 @@ RRF-merge-by-label logic `QueryExpansionRetriever` already had inline.
   (`server/tests/run_test_server.py`) — no in-process ASGI bridge is
   reachable from a Node test runner the way FastAPI's `TestClient`
   gives the Python SDK one.
-- ⬜ gRPC, Docker/Helm/k8s manifests, Redis, feature flags, load tests
-  (Locust/k6) — none of this exists yet.
+- 🟡 Docker Compose + Redis — ✅, closed by Phase 11 below
+  (`docker-compose.yml`, `server/Dockerfile`, ADR 0014/0018/0017). gRPC,
+  Helm/k8s manifests, feature flags, load tests (Locust/k6) — ⬜, still
+  genuinely open (Kubernetes explicitly deferred to a future ADR, not
+  forgotten).
 - ✅ **Backup/restore runbook** — `docs/RUNBOOK.md`, researched directly
   against the code and its test suite (exact file/line sourced for
   every claim). Documents the real `create_snapshot()`/`rollback()`
@@ -876,8 +879,8 @@ else (28b, 30+) still from scratch.**
     709b9d4). Encryption at rest/in transit, audit logs — ⬜, still
     open; both need a real request/server context (Phase 8).
 
-**Phase 8 (API/SDK/deployment): items 34/35 done, everything else (36+)
-still from scratch.**
+**Phase 8 (API/SDK/deployment): items 34/35/36/38/39 done; 37 (load
+tests) and gRPC/Helm/feature flags (part of 36) still open.**
 34. ✅ Reference FastAPI server (`server/`) + its free OpenAPI spec —
     commit 41b0bec. See `docs/adr/0008-api-server-as-sibling-package.md`.
 35. 🟡 Python SDK (`sdk/python/`, commit faaeccd) — ✅. MCP server
