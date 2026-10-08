@@ -92,3 +92,34 @@ def test_accepts_both_redis_url_schemes() -> None:
 def test_rejects_an_unknown_environment_value() -> None:
     with pytest.raises(ValidationError):
         Settings(environment="production")  # must be exactly "prod", not "production"
+
+
+def test_secret_read_from_a_mounted_secrets_file(tmp_path) -> None:
+    """"Secrets read from env or a mounted secrets file" - a real file
+    under secrets_dir named after the field populates it when no env
+    var of the same name is set. A local subclass with its own
+    model_config is used rather than monkeypatching Settings' own
+    model_config (a class-level dict shared with every other test in
+    this module) or RAGCORE_SECRETS_DIR (read once, at import time -
+    too late to affect an already-imported Settings class)."""
+    from pydantic_settings import SettingsConfigDict
+
+    (tmp_path / "database_url").write_text("postgresql://secretuser:secretpw@db/ragcore")
+
+    class SettingsWithSecretsDir(Settings):
+        model_config = SettingsConfigDict(secrets_dir=str(tmp_path), extra="ignore")
+
+    s = SettingsWithSecretsDir(_env_file=None)
+    assert s.database_url == "postgresql://secretuser:secretpw@db/ragcore"
+
+
+def test_env_var_still_wins_over_a_secrets_file(tmp_path) -> None:
+    from pydantic_settings import SettingsConfigDict
+
+    (tmp_path / "database_url").write_text("postgresql://from-file/db")
+
+    class SettingsWithSecretsDir(Settings):
+        model_config = SettingsConfigDict(secrets_dir=str(tmp_path), extra="ignore")
+
+    s = SettingsWithSecretsDir(_env_file=None, database_url="postgresql://from-env/db")
+    assert s.database_url == "postgresql://from-env/db"

@@ -22,7 +22,9 @@ first called).
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import field_validator
@@ -30,9 +32,28 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.env_parsing import parse_colon_pairs, parse_int_quotas
 
+# "Secrets read from env or a mounted secrets file, never baked into
+# images or committed" (the deployment request's own rule) -
+# pydantic-settings' own `secrets_dir` does exactly this: for any field,
+# a file named after it (lowercase - e.g. `database_url`) under this
+# directory is read as that field's value, with a real env var of the
+# same name still taking priority when both are present (confirmed
+# directly: constructing Settings with both DATABASE_URL set and a
+# matching secrets file present returns the env var's value). Standard
+# Docker/Compose-secrets convention is `/run/secrets`; only passed to
+# SettingsConfigDict when that directory actually exists, since
+# pydantic-settings otherwise emits a UserWarning on every local/test
+# run where it's absent - checked once at import time via a plain
+# os.environ read (RAGCORE_SECRETS_DIR), not a pydantic field, since
+# model_config itself is fixed at class-definition time.
+_secrets_dir = os.environ.get("RAGCORE_SECRETS_DIR", "/run/secrets")
+_SECRETS_DIR = _secrets_dir if Path(_secrets_dir).is_dir() else None
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", secrets_dir=_SECRETS_DIR
+    )
 
     environment: Literal["dev", "staging", "prod"] = "dev"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
