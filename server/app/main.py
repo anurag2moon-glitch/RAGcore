@@ -15,11 +15,13 @@ import tempfile
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.auth import get_tenant_id
 from app.corpus_provider import get_scoped_corpus
 from app.jobs import fetch_job, get_ingest_queue
+from app.logging_config import configure_logging, request_id_middleware
+from app.metrics import get_request_metrics, metrics_middleware
 from app.models import (
     AskRequest,
     AskResponse,
@@ -57,7 +59,8 @@ ScopedCorpus = Corpus | TenantScopedCorpus
 # future request first happens to touch the broken field. Every field
 # has a safe default, so this never fails in a test process (which
 # sets nothing) or in local dev with no .env at all.
-get_settings()
+_settings = get_settings()
+configure_logging(_settings.log_level)
 
 app = FastAPI(
     title="ragcore reference server",
@@ -69,7 +72,19 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.middleware("http")(metrics_middleware)
+app.middleware("http")(request_id_middleware)
+
 app.include_router(rules_router)
+
+
+@app.get("/metrics", response_class=PlainTextResponse)
+def metrics() -> str:
+    """Plain Prometheus text exposition - see app/metrics.py's own
+    docstring for why this is hand-written rather than a dependency,
+    and how it differs from the OTLP metrics FastAPI's own telemetry
+    already exports to the collector."""
+    return get_request_metrics().render_prometheus_text()
 
 
 @app.exception_handler(TenancyError)
