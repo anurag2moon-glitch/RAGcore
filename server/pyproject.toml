@@ -43,7 +43,7 @@ dependencies = [
 # an older 0.110.x would silently have no telemetry() kwarg at all.
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27", "moto[s3]>=5", "fakeredis>=2.20"]
+dev = ["pytest>=8", "httpx>=0.27", "moto[s3]>=5", "fakeredis>=2.20", "mypy>=1.10"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
@@ -54,3 +54,16 @@ markers = [
     "postgres: hits a real Postgres server via RAGCORE_TEST_POSTGRES_URL; excluded by default, skips cleanly when that env var is unset",
 ]
 addopts = "-m 'not postgres'"
+
+[tool.mypy]
+# app/ and scripts/ are both zero-finding as of this config's
+# introduction (confirmed directly, not assumed) - this is a genuine
+# CI gate (ci.yml's test-server job), not report-only like the
+# repo-wide ruff step, specifically because there's no backlog to
+# excuse deferring it. explicit_package_bases: scripts/ has no
+# __init__.py (a namespace package, matching how it's imported
+# elsewhere - see tests/test_backup_restore.py), which mypy otherwise
+# refuses to check alongside app/ ("Source file found twice under
+# different module names").
+explicit_package_bases = true
+ignore_missing_imports = true

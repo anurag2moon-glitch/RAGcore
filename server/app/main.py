@@ -13,6 +13,7 @@ import hashlib
 import logging
 import tempfile
 from pathlib import Path
+from typing import TypeAlias
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -50,7 +51,7 @@ from ragcore.tenancy import TenantScopedCorpus
 
 logger = logging.getLogger("ragcore_server")
 
-ScopedCorpus = Corpus | TenantScopedCorpus
+ScopedCorpus: TypeAlias = Corpus | TenantScopedCorpus
 
 # Fail fast: validates every setting (malformed RAGCORE_API_KEYS/
 # RAGCORE_TENANT_QUOTAS/.../a non-postgresql:// DATABASE_URL/a non-
@@ -178,7 +179,11 @@ def get_job_status(job_id: str) -> JobStatusResponse:
         raise HTTPException(status_code=404, detail=f"no job found with job_id {job_id!r}")
 
     status = job.get_status()
-    result = IngestResponse(**job.return_value()) if status == "finished" else None
+    result = None
+    if status == "finished":
+        finished_value = job.return_value()
+        assert isinstance(finished_value, dict)  # rq's own contract for run_ingest_job's return type
+        result = IngestResponse(**finished_value)
     error = None
     if status == "failed":
         latest = job.latest_result()

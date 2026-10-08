@@ -90,6 +90,16 @@ class Settings(BaseSettings):
     otel_exporter_otlp_endpoint: str | None = None
     otel_service_name: str = "ragcore-server"
 
+    # -- CI integration test only (docs/adr/0022) --------------------------
+    ragcore_use_fake_models: bool = False
+    """Swaps the real VoyageContextEmbedder/generator for
+    app.ci_fakes' offline, deterministic pair - never for a real
+    deployment. Exists so the CI "integration test against the
+    Compose stack" step (ingest/search/citation) can run against a
+    *real* running api/worker container pair without a
+    VOYAGE_API_KEY/ANTHROPIC_API_KEY secret, matching this repo's
+    existing pytest -m live exclusion for the same reason."""
+
     @field_validator("ragcore_rate_limit_per_minute")
     @classmethod
     def _rate_limit_positive(cls, v: int | None) -> int | None:

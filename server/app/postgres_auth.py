@@ -23,7 +23,7 @@ execution until run against a live Postgres server at least once.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from app.naming import API_KEYS_TABLE, TENANTS_TABLE
@@ -31,14 +31,14 @@ from app.naming import API_KEYS_TABLE, TENANTS_TABLE
 try:
     import psycopg
 except ImportError as e:  # pragma: no cover - exercised only when extra missing
-    _IMPORT_ERROR = e
-    psycopg = None
+    _IMPORT_ERROR: ImportError | None = e
+    psycopg = None  # type: ignore[assignment]
 else:
     _IMPORT_ERROR = None
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PostgresApiKeyStore:

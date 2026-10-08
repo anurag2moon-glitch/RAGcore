@@ -22,12 +22,22 @@ from ragcore.tenancy import TenantScopedCorpus
 
 @lru_cache(maxsize=1)
 def _corpus_singleton() -> Corpus:
-    db_path = get_settings().ragcore_db_path
+    settings = get_settings()
+    db_path = settings.ragcore_db_path
     if not db_path:
         raise RuntimeError(
             "RAGCORE_DB_PATH must be set to the on-disk LanceDB path "
             "this server should open (e.g. ./data/corpus.lancedb)"
         )
+    if settings.ragcore_use_fake_models:
+        # CI integration test only (app.settings.Settings.ragcore_use_fake_models's
+        # own docstring, docs/adr/0022) - never set in a real deployment.
+        from app.ci_fakes import EchoCitingGenerator, HashingEmbedder
+
+        embedder = HashingEmbedder()
+        corpus = Corpus.open(db_path, embedder=embedder)
+        corpus.generator = EchoCitingGenerator()
+        return corpus
     return Corpus.open(db_path)
 
 

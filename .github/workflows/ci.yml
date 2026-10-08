@@ -69,6 +69,10 @@ jobs:
           pip install -e .
           pip install -e "server[dev]"
 
+      - name: Type-check (blocking - zero findings as of its introduction, see server/pyproject.toml's [tool.mypy])
+        working-directory: server
+        run: python -m mypy app scripts
+
       - name: Run the server test suite
         working-directory: server
         run: python -m pytest -q
@@ -146,6 +150,84 @@ jobs:
       - name: Run the Lal Kitab test suite
         working-directory: domains/lal_kitab
         run: python -m pytest -q
+
+  build-images:
+    # "build images" (deployment task, CI section) - the api/worker/
+    # migrate targets of server/Dockerfile (ADR 0018), built from the
+    # repo root per that file's own instructions. This is also the
+    # first real verification this Dockerfile ever gets - no Docker
+    # daemon exists in the development environment it was written in
+    # (ADR 0018 says so plainly), so this job failing is the first
+    # signal that something about it doesn't actually work.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build api image
+        run: docker build -f server/Dockerfile --target api -t ragcore-api:ci .
+
+      - name: Build worker image
+        run: docker build -f server/Dockerfile --target worker -t ragcore-worker:ci .
+
+      - name: Build migrate image
+        run: docker build -f server/Dockerfile --target migrate -t ragcore-migrate:ci .
+
+  integration-test:
+    # "run an integration test against the Compose stack (ingest a
+    # small sample book, run a search, check the citation)" -
+    # deployment task, CI section. RAGCORE_USE_FAKE_MODELS=1 (ADR 0022)
+    # swaps the real Voyage/Anthropic-backed embedder+generator for a
+    # deterministic, offline pair (app.ci_fakes) - no
+    # VOYAGE_API_KEY/ANTHROPIC_API_KEY secret is assumed to exist here,
+    # matching this repo's existing `pytest -m live` exclusion.
+    needs: build-images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Write server/.env for the Compose stack
+        run: |
+          cp server/.env.staging.example server/.env
+          echo "RAGCORE_USE_FAKE_MODELS=1" >> server/.env
+
+      - name: Bring up the Compose stack
+        run: docker compose up -d --build
+
+      - name: Wait for the api container to report ready
+        # api only starts once `migrate` exits 0 (service_completed_successfully,
+        # ADR 0018) - polling api's own readiness is sufficient to know
+        # migrations already ran, no separate wait needed.
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8000/health/ready > /dev/null; then
+              echo "api is ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "api never became ready" >&2
+          docker compose logs
+          exit 1
+
+      - name: Seed a staging tenant/key
+        run: docker compose exec -T api python scripts/seed_staging.py ci-integration-tenant ci-integration-key
+
+      - name: Install httpx for the integration test script
+        run: pip install httpx
+
+      - name: Ingest a sample book, run a search, check the citation
+        run: python server/scripts/ci_integration_test.py http://localhost:8000
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v
 
   test-typescript-sdk:
     # sdk/typescript/ is a fifth sibling package — the TypeScript
